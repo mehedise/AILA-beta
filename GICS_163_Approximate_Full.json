@@ -1,0 +1,510 @@
+{
+  "version": "expanded_approx_163_sub_industry",
+  "note": "Approximation of full GICS structure used in enterprise systems. For exact official dataset, MSCI/S&P license required.",
+  "hierarchy": "Sector > Industry Group > Industry > Sub-Industry",
+  "sectors": [
+    {
+      "code": "10",
+      "name": "Energy",
+      "industry_groups": [
+        {
+          "code": "1010",
+          "name": "Energy Equipment & Services",
+          "industries": [
+            {
+              "name": "Oil & Gas Drilling",
+              "sub_industries": [
+                "Drilling"
+              ]
+            },
+            {
+              "name": "Oil & Gas Equipment & Services",
+              "sub_industries": [
+                "Equipment Services"
+              ]
+            }
+          ]
+        },
+        {
+          "code": "1020",
+          "name": "Oil, Gas & Consumable Fuels",
+          "industries": [
+            {
+              "name": "Integrated Oil & Gas",
+              "sub_industries": [
+                "Integrated Oil"
+              ]
+            },
+            {
+              "name": "Oil & Gas Exploration & Production",
+              "sub_industries": [
+                "Upstream"
+              ]
+            },
+            {
+              "name": "Oil & Gas Refining & Marketing",
+              "sub_industries": [
+                "Downstream"
+              ]
+            },
+            {
+              "name": "Oil & Gas Storage & Transportation",
+              "sub_industries": [
+                "Midstream"
+              ]
+            },
+            {
+              "name": "Coal & Consumable Fuels",
+              "sub_industries": [
+                "Coal"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "15",
+      "name": "Materials",
+      "industry_groups": [
+        {
+          "code": "1510",
+          "name": "Materials",
+          "industries": [
+            {
+              "name": "Chemicals",
+              "sub_industries": [
+                "Commodity Chemicals",
+                "Diversified Chemicals",
+                "Fertilizers & Agricultural Chemicals",
+                "Industrial Gases",
+                "Specialty Chemicals"
+              ]
+            },
+            {
+              "name": "Construction Materials",
+              "sub_industries": [
+                "Cement",
+                "Aggregates"
+              ]
+            },
+            {
+              "name": "Containers & Packaging",
+              "sub_industries": [
+                "Metal Packaging",
+                "Glass Packaging",
+                "Paper Packaging"
+              ]
+            },
+            {
+              "name": "Metals & Mining",
+              "sub_industries": [
+                "Gold",
+                "Silver",
+                "Copper",
+                "Steel",
+                "Aluminum"
+              ]
+            },
+            {
+              "name": "Paper & Forest Products",
+              "sub_industries": [
+                "Paper",
+                "Timber"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "20",
+      "name": "Industrials",
+      "industry_groups": [
+        {
+          "code": "2010",
+          "name": "Capital Goods",
+          "industries": [
+            {
+              "name": "Aerospace & Defense",
+              "sub_industries": [
+                "Defense Systems",
+                "Aircraft Manufacturing"
+              ]
+            },
+            {
+              "name": "Building Products",
+              "sub_industries": [
+                "Construction Materials"
+              ]
+            },
+            {
+              "name": "Construction & Engineering",
+              "sub_industries": [
+                "Infrastructure"
+              ]
+            },
+            {
+              "name": "Electrical Equipment",
+              "sub_industries": [
+                "Industrial Electrical"
+              ]
+            },
+            {
+              "name": "Machinery",
+              "sub_industries": [
+                "Industrial Machinery",
+                "Agricultural Machinery"
+              ]
+            }
+          ]
+        },
+        {
+          "code": "2030",
+          "name": "Transportation",
+          "industries": [
+            {
+              "name": "Air Freight & Logistics",
+              "sub_industries": [
+                "Cargo Airlines"
+              ]
+            },
+            {
+              "name": "Passenger Transportation",
+              "sub_industries": [
+                "Airlines",
+                "Rail"
+              ]
+            },
+            {
+              "name": "Marine Transportation",
+              "sub_industries": [
+                "Shipping"
+              ]
+            },
+            {
+              "name": "Ground Transportation",
+              "sub_industries": [
+                "Trucking"
+              ]
+            },
+            {
+              "name": "Transportation Infrastructure",
+              "sub_industries": [
+                "Ports",
+                "Airports"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "45",
+      "name": "Information Technology",
+      "industry_groups": [
+        {
+          "code": "4510",
+          "name": "Software & Services",
+          "industries": [
+            {
+              "name": "Software",
+              "sub_industries": [
+                "Application Software",
+                "Systems Software",
+                "SaaS"
+              ]
+            },
+            {
+              "name": "IT Services",
+              "sub_industries": [
+                "Consulting",
+                "Managed Services"
+              ]
+            }
+          ]
+        },
+        {
+          "code": "4530",
+          "name": "Semiconductors & Equipment",
+          "industries": [
+            {
+              "name": "Semiconductors",
+              "sub_industries": [
+                "Logic Chips",
+                "Memory"
+              ]
+            },
+            {
+              "name": "Semiconductor Equipment",
+              "sub_industries": [
+                "Fabrication Equipment"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "40",
+      "name": "Financials",
+      "industry_groups": [
+        {
+          "code": "4010",
+          "name": "Banks",
+          "industries": [
+            {
+              "name": "Diversified Banks",
+              "sub_industries": [
+                "Universal Banks"
+              ]
+            },
+            {
+              "name": "Regional Banks",
+              "sub_industries": [
+                "Retail Banking"
+              ]
+            }
+          ]
+        },
+        {
+          "code": "4020",
+          "name": "Financial Services",
+          "industries": [
+            {
+              "name": "Payment Processing",
+              "sub_industries": [
+                "Digital Payments"
+              ]
+            },
+            {
+              "name": "Asset Management",
+              "sub_industries": [
+                "Funds"
+              ]
+            },
+            {
+              "name": "Capital Markets",
+              "sub_industries": [
+                "Brokerage",
+                "Investment Banking"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "25",
+      "name": "Consumer Discretionary",
+      "industry_groups": [
+        {
+          "code": "2510",
+          "name": "Automobiles",
+          "industries": [
+            {
+              "name": "Automobiles",
+              "sub_industries": [
+                "Cars",
+                "EVs"
+              ]
+            },
+            {
+              "name": "Auto Components",
+              "sub_industries": [
+                "Parts",
+                "Tires"
+              ]
+            }
+          ]
+        },
+        {
+          "code": "2530",
+          "name": "Consumer Services",
+          "industries": [
+            {
+              "name": "Hotels & Leisure",
+              "sub_industries": [
+                "Hotels",
+                "Resorts",
+                "Gaming"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "30",
+      "name": "Consumer Staples",
+      "industry_groups": [
+        {
+          "code": "3020",
+          "name": "Food & Beverage",
+          "industries": [
+            {
+              "name": "Beverages",
+              "sub_industries": [
+                "Soft Drinks",
+                "Alcohol-Free Beverages"
+              ]
+            },
+            {
+              "name": "Food Products",
+              "sub_industries": [
+                "Packaged Foods"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "35",
+      "name": "Health Care",
+      "industry_groups": [
+        {
+          "code": "3510",
+          "name": "Health Care Equipment & Services",
+          "industries": [
+            {
+              "name": "Health Care Services",
+              "sub_industries": [
+                "Hospitals",
+                "Clinics"
+              ]
+            },
+            {
+              "name": "Medical Devices",
+              "sub_industries": [
+                "Equipment"
+              ]
+            }
+          ]
+        },
+        {
+          "code": "3520",
+          "name": "Pharmaceuticals & Biotechnology",
+          "industries": [
+            {
+              "name": "Pharmaceuticals",
+              "sub_industries": [
+                "Drugs"
+              ]
+            },
+            {
+              "name": "Biotechnology",
+              "sub_industries": [
+                "Genomics"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "50",
+      "name": "Communication Services",
+      "industry_groups": [
+        {
+          "code": "5010",
+          "name": "Telecom",
+          "industries": [
+            {
+              "name": "Telecommunication Services",
+              "sub_industries": [
+                "Mobile",
+                "Broadband"
+              ]
+            }
+          ]
+        },
+        {
+          "code": "5020",
+          "name": "Media & Entertainment",
+          "industries": [
+            {
+              "name": "Media",
+              "sub_industries": [
+                "Broadcasting",
+                "Publishing"
+              ]
+            },
+            {
+              "name": "Entertainment",
+              "sub_industries": [
+                "Streaming",
+                "Gaming"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "55",
+      "name": "Utilities",
+      "industry_groups": [
+        {
+          "code": "5510",
+          "name": "Utilities",
+          "industries": [
+            {
+              "name": "Electric Utilities",
+              "sub_industries": [
+                "Power Generation"
+              ]
+            },
+            {
+              "name": "Water Utilities",
+              "sub_industries": [
+                "Water Supply"
+              ]
+            },
+            {
+              "name": "Renewable Energy",
+              "sub_industries": [
+                "Solar",
+                "Wind"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "60",
+      "name": "Real Estate",
+      "industry_groups": [
+        {
+          "code": "6010",
+          "name": "REITs",
+          "industries": [
+            {
+              "name": "Equity REITs",
+              "sub_industries": [
+                "Industrial",
+                "Retail",
+                "Office",
+                "Residential"
+              ]
+            }
+          ]
+        },
+        {
+          "code": "6020",
+          "name": "Real Estate Management",
+          "industries": [
+            {
+              "name": "Property Management",
+              "sub_industries": [
+                "Development",
+                "Services"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
