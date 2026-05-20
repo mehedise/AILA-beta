@@ -3,6 +3,15 @@ import { inngest } from "@/lib/inngest/client";
 import { db } from "@/lib/db/client";
 import { imports } from "@/lib/db/schema";
 import { downloadPdfFromR2, getPdfPageCount } from "@/lib/pdf/load";
+import { prerenderPdfChunk } from "@/lib/pdf/prerender";
+
+/**
+ * Number of pages prerendered per Inngest step. Each chunk opens the PDF
+ * with pdfjs exactly once, so larger chunks amortize the pdfjs init cost
+ * but increase per-step duration. 10 keeps step duration under ~30s for
+ * typical contact-list PDFs.
+ */
+const PRERENDER_CHUNK_SIZE = 10;
 
 export const processPdf = inngest.createFunction(
   {
@@ -43,6 +52,19 @@ export const processPdf = inngest.createFunction(
           .set({ status: "ready_for_review" })
           .where(eq(imports.id, importId));
         return { importId, pages: 0 };
+      }
+
+      // Pre-render every page once. Each chunk opens the source PDF a
+      // single time (one R2 download + one pdfjs init) and writes per-page
+      // text JSON + (when needed) a trimmed PNG to R2 under
+      // `imports/{importId}/pages/{n}.{json,png}`. After this, extract-page
+      // never touches the source PDF again.
+      for (let start = 1; start <= pageCount; start += PRERENDER_CHUNK_SIZE) {
+        const end = Math.min(start + PRERENDER_CHUNK_SIZE - 1, pageCount);
+        await step.run(`prerender-${start}-${end}`, async () => {
+          const buf = await downloadPdfFromR2(fileKey);
+          return prerenderPdfChunk(buf, importId, start, end);
+        });
       }
 
       await step.sendEvent(

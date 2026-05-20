@@ -3,7 +3,8 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { extractedLeads, imports } from "@/lib/db/schema";
-import { deleteObject } from "@/lib/storage/r2";
+import { pageArtifactsPrefix } from "@/lib/pdf/page-artifacts";
+import { deleteObject, deleteObjectsByPrefix } from "@/lib/storage/r2";
 
 export async function GET(
   _req: Request,
@@ -76,9 +77,10 @@ export async function DELETE(
       .filter((k) => k && !/^https?:\/\//.test(k)),
   ].filter(Boolean);
 
-  await Promise.allSettled(
-    keysToDelete.map((key) => deleteObject(key as string))
-  );
+  await Promise.allSettled([
+    ...keysToDelete.map((key) => deleteObject(key as string)),
+    deleteObjectsByPrefix(pageArtifactsPrefix(id)),
+  ]);
 
   return NextResponse.json({ ok: true, id: result[0].id });
 }

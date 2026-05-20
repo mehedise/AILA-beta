@@ -6,7 +6,19 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "**" },
     ],
   },
-  serverExternalPackages: ["pdfjs-dist", "sharp", "pdf-to-png-converter"],
+  serverExternalPackages: [
+    "pdfjs-dist",
+    "sharp",
+    "pdf-to-png-converter",
+    "@napi-rs/canvas",
+  ],
+  // Next 16 clones the request body when a proxy/middleware is present and
+  // silently truncates anything past `proxyClientMaxBodySize` (default 10mb),
+  // which breaks `req.formData()` for larger PDF uploads. Raise it above the
+  // 50mb hard cap enforced in `app/api/upload/route.ts`.
+  experimental: {
+    proxyClientMaxBodySize: "60mb",
+  },
 };
 
 export default nextConfig;

@@ -1,6 +1,9 @@
 import {
+  DeleteObjectsCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -60,12 +63,66 @@ export async function getSignedReadUrl(
   );
 }
 
+export async function objectExists(key: string): Promise<boolean> {
+  if (!key) return false;
+  const client = getClient();
+  try {
+    await client.send(
+      new HeadObjectCommand({ Bucket: getBucket(), Key: key })
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function deleteObject(key: string): Promise<void> {
   if (!key) return;
   const client = getClient();
   await client.send(
     new DeleteObjectCommand({ Bucket: getBucket(), Key: key })
   );
+}
+
+export async function deleteObjectsByPrefix(prefix: string): Promise<number> {
+  if (!prefix) return 0;
+
+  const client = getClient();
+  const bucket = getBucket();
+  let continuationToken: string | undefined;
+  let deleted = 0;
+
+  do {
+    const listed = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      })
+    );
+
+    const objects =
+      listed.Contents?.map((item) => item.Key)
+        .filter((key): key is string => Boolean(key))
+        .map((Key) => ({ Key })) ?? [];
+
+    if (objects.length > 0) {
+      await client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: {
+            Objects: objects,
+            Quiet: true,
+          },
+        })
+      );
+      deleted += objects.length;
+    }
+
+    continuationToken = listed.NextContinuationToken;
+  } while (continuationToken);
+
+  return deleted;
 }
 
 export function getPublicUrl(key: string): string {

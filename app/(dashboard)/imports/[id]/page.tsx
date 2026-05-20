@@ -9,6 +9,7 @@ import {
   CheckCheck,
   Database,
   RefreshCw,
+  RotateCw,
   Sparkles,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -28,6 +29,10 @@ export default function ImportDetailPage() {
   );
   const [reEnriching, setReEnriching] = useState(false);
   const [reEnrichMessage, setReEnrichMessage] = useState<string | null>(null);
+  const [retryingPages, setRetryingPages] = useState(false);
+  const [retryPagesMessage, setRetryPagesMessage] = useState<string | null>(
+    null
+  );
   const [approvingAll, setApprovingAll] = useState(false);
   const [approveAllMessage, setApproveAllMessage] = useState<string | null>(
     null
@@ -73,6 +78,29 @@ export default function ImportDetailPage() {
       await fetchData();
     } finally {
       setReEnriching(false);
+    }
+  }, [fetchData, id]);
+
+  const retryMissingPages = useCallback(async () => {
+    setRetryingPages(true);
+    setRetryPagesMessage(null);
+    try {
+      const res = await fetch(`/api/imports/${id}/retry-pages`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRetryPagesMessage(data.error ?? "Failed to retry missing pages");
+        return;
+      }
+      setRetryPagesMessage(
+        data.queued > 0
+          ? `Re-queued ${data.queued} page(s)`
+          : data.message ?? "No missing pages"
+      );
+      await fetchData();
+    } finally {
+      setRetryingPages(false);
     }
   }, [fetchData, id]);
 
@@ -294,6 +322,31 @@ export default function ImportDetailPage() {
                 />
                 {reEnriching ? "Queueing…" : "AI Enrich"}
               </Button>
+              {imp.sourceType === "pdf" &&
+                imp.totalItems > 0 &&
+                imp.processedItems < imp.totalItems && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void retryMissingPages()}
+                    disabled={retryingPages}
+                    title={`${
+                      imp.totalItems - imp.processedItems
+                    } page(s) missing`}
+                  >
+                    <RotateCw
+                      className={cn(
+                        "h-4 w-4",
+                        retryingPages && "animate-spin"
+                      )}
+                    />
+                    {retryingPages
+                      ? "Queueing…"
+                      : `Retry failed pages (${
+                          imp.totalItems - imp.processedItems
+                        })`}
+                  </Button>
+                )}
               <Button
                 type="button"
                 variant="outline"
@@ -398,12 +451,21 @@ export default function ImportDetailPage() {
             </div>
           )}
 
-          {(approveAllMessage || reclassifyMessage || reEnrichMessage) && (
+          {(approveAllMessage ||
+            reclassifyMessage ||
+            reEnrichMessage ||
+            retryPagesMessage) && (
             <div className="flex flex-wrap items-center gap-2 text-xs">
               {approveAllMessage && (
                 <span className="brand-pill">
                   <CheckCheck className="h-3 w-3" />
                   {approveAllMessage}
+                </span>
+              )}
+              {retryPagesMessage && (
+                <span className="brand-pill">
+                  <RotateCw className="h-3 w-3" />
+                  {retryPagesMessage}
                 </span>
               )}
               {reEnrichMessage && (
@@ -438,7 +500,12 @@ export default function ImportDetailPage() {
           </p>
         </div>
         <div className="app-panel-body p-0">
-          <ExtractedLeadTable leads={leads} importId={id} />
+          <ExtractedLeadTable
+            leads={leads}
+            importId={id}
+            isProcessing={isSaving || enrichmentActive}
+            onLeadsChanged={() => void fetchData()}
+          />
         </div>
       </section>
     </div>

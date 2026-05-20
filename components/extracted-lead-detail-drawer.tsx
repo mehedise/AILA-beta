@@ -6,6 +6,8 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import {
   Building2,
   Calendar,
+  Check,
+  ExternalLink,
   Globe,
   IdCard,
   Layers,
@@ -13,24 +15,28 @@ import {
   MapPin,
   Pencil,
   Phone,
+  ShieldCheck,
   Smartphone,
   Sparkles,
-  Trash2,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { ConfidenceBadge } from "@/components/confidence-badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import type { Lead } from "@/lib/db/schema";
+import type { ExtractedLead } from "@/lib/db/schema";
 
 type Props = {
-  lead: Lead | null;
+  lead: ExtractedLead | null;
+  importId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onUpdate?: (lead: Lead) => void;
-  onDelete?: (id: string) => void;
+  /** Called with the updated row after PATCH succeeds. */
+  onUpdate?: (lead: ExtractedLead) => void;
+  /** Called after an approve/reject action so the parent can refetch. */
+  onStatusChange?: () => void;
 };
 
 const EDITABLE_FIELDS = [
@@ -53,12 +59,13 @@ const EDITABLE_FIELDS = [
 
 type EditableField = (typeof EDITABLE_FIELDS)[number];
 
-export function LeadDetailDrawer({
+export function ExtractedLeadDetailDrawer({
   lead,
+  importId,
   open,
   onOpenChange,
   onUpdate,
-  onDelete,
+  onStatusChange,
 }: Props) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -79,8 +86,9 @@ export function LeadDetailDrawer({
             <DrawerBody
               key={lead.id}
               lead={lead}
+              importId={importId}
               onUpdate={onUpdate}
-              onDelete={onDelete}
+              onStatusChange={onStatusChange}
               onClose={() => onOpenChange(false)}
             />
           ) : null}
@@ -90,22 +98,25 @@ export function LeadDetailDrawer({
   );
 }
 
-type Mode = "view" | "edit" | "confirm-delete";
+type Mode = "view" | "edit";
 
 function DrawerBody({
   lead,
+  importId,
   onUpdate,
-  onDelete,
+  onStatusChange,
   onClose,
 }: {
-  lead: Lead;
-  onUpdate?: (lead: Lead) => void;
-  onDelete?: (id: string) => void;
+  lead: ExtractedLead;
+  importId: string;
+  onUpdate?: (lead: ExtractedLead) => void;
+  onStatusChange?: () => void;
   onClose: () => void;
 }) {
   const [mode, setMode] = React.useState<Mode>("view");
   const [saving, setSaving] = React.useState(false);
-  const [deleting, setDeleting] = React.useState(false);
+  const [approving, setApproving] = React.useState(false);
+  const [rejecting, setRejecting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState<Record<EditableField, string>>(
     () => initialDraft(lead)
@@ -123,7 +134,7 @@ function DrawerBody({
         const next = draft[key].trim();
         payload[key] = next === "" ? null : next;
       }
-      const res = await fetch(`/api/leads/${lead.id}`, {
+      const res = await fetch(`/api/extracted-leads/${lead.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -133,27 +144,36 @@ function DrawerBody({
         setError(data.error ?? "Failed to save");
         return;
       }
-      if (data.lead) onUpdate?.(data.lead as Lead);
+      if (data.extractedLead) onUpdate?.(data.extractedLead as ExtractedLead);
       setMode("view");
     } finally {
       setSaving(false);
     }
   };
 
-  const remove = async () => {
-    setDeleting(true);
+  const runAction = async (action: "approve" | "reject") => {
+    if (action === "approve") setApproving(true);
+    else setRejecting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/leads/${lead.id}`, { method: "DELETE" });
+      const res = await fetch(
+        `/api/extracted-leads/${lead.id}/${action}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        }
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error ?? "Failed to delete");
+        setError(data.error ?? `Failed to ${action}`);
         return;
       }
-      onDelete?.(lead.id);
+      onStatusChange?.();
       onClose();
     } finally {
-      setDeleting(false);
+      if (action === "approve") setApproving(false);
+      else setRejecting(false);
     }
   };
 
@@ -161,6 +181,20 @@ function DrawerBody({
   const positionAtCompany = [lead.title, lead.company]
     .filter(Boolean)
     .join(" · ");
+
+  const reviewBadgeVariant =
+    lead.reviewStatus === "approved"
+      ? "default"
+      : lead.reviewStatus === "rejected"
+        ? "destructive"
+        : "secondary";
+
+  const enrichmentBadgeVariant =
+    lead.enrichmentStatus === "enriched"
+      ? "default"
+      : lead.enrichmentStatus === "failed"
+        ? "destructive"
+        : "secondary";
 
   return (
     <>
@@ -175,21 +209,24 @@ function DrawerBody({
             </p>
           )}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <Badge variant={reviewBadgeVariant} className="text-[11px]">
+              {lead.reviewStatus}
+            </Badge>
+            <Badge variant={enrichmentBadgeVariant} className="text-[11px]">
+              <Sparkles className="h-3 w-3" />
+              {lead.enrichmentStatus === "enriched"
+                ? "AI Enriched"
+                : lead.enrichmentStatus}
+            </Badge>
+            {lead.pageNumber !== null && lead.pageNumber !== undefined && (
+              <Badge variant="outline" className="text-[11px]">
+                Page {lead.pageNumber}
+              </Badge>
+            )}
             {lead.gicsSector && (
               <Badge variant="outline" className="text-[11px]">
                 {lead.gicsSector}
               </Badge>
-            )}
-            {lead.gicsIndustryGroup && (
-              <Badge variant="outline" className="text-[11px]">
-                {lead.gicsIndustryGroup}
-              </Badge>
-            )}
-            {lead.enrichmentStatus === "enriched" && (
-              <span className="brand-pill">
-                <Sparkles className="h-3 w-3" />
-                AI Enriched
-              </span>
             )}
           </div>
         </div>
@@ -208,7 +245,10 @@ function DrawerBody({
       </header>
 
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-        <CardImageSection leadId={lead.id} />
+        <CardImageSection
+          imageUrl={lead.cardImageUrl}
+          pageNumber={lead.pageNumber}
+        />
 
         {mode === "edit" ? (
           <EditForm draft={draft} onChange={setField} />
@@ -224,32 +264,7 @@ function DrawerBody({
       </div>
 
       <footer className="border-t border-border/70 bg-muted/30 px-6 py-3">
-        {mode === "confirm-delete" ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-sm text-foreground">
-              Delete this lead? This cannot be undone.
-            </span>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setMode("view")}
-                disabled={deleting}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => void remove()}
-                disabled={deleting}
-              >
-                <Trash2 className="h-4 w-4" />
-                {deleting ? "Deleting…" : "Delete lead"}
-              </Button>
-            </div>
-          </div>
-        ) : mode === "edit" ? (
+        {mode === "edit" ? (
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="ghost"
@@ -269,30 +284,45 @@ function DrawerBody({
           </div>
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => setMode("confirm-delete")}
+            <Link
+              href={`/imports/${importId}/review/${lead.id}`}
+              className={cn(
+                buttonVariants({ variant: "ghost", size: "sm" })
+              )}
             >
-              <Trash2 className="h-4 w-4" />
-              Delete
-            </Button>
-            <div className="flex items-center gap-2">
-              <DialogPrimitive.Close
-                render={<Button variant="ghost" size="sm" />}
-              >
-                Close
-              </DialogPrimitive.Close>
+              <ExternalLink className="h-3.5 w-3.5" />
+              Full review
+            </Link>
+            <div className="flex flex-wrap items-center gap-2">
               <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void runAction("reject")}
+                disabled={approving || rejecting}
+              >
+                <X className="h-4 w-4" />
+                {rejecting ? "Rejecting…" : "Reject"}
+              </Button>
+              <Button
+                variant="outline"
                 size="sm"
                 onClick={() => {
                   setDraft(initialDraft(lead));
                   setError(null);
                   setMode("edit");
                 }}
+                disabled={approving || rejecting}
               >
                 <Pencil className="h-4 w-4" />
                 Edit
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void runAction("approve")}
+                disabled={approving || rejecting}
+              >
+                <Check className="h-4 w-4" />
+                {approving ? "Approving…" : "Approve"}
               </Button>
             </div>
           </div>
@@ -302,12 +332,53 @@ function DrawerBody({
   );
 }
 
-function initialDraft(lead: Lead): Record<EditableField, string> {
+function initialDraft(lead: ExtractedLead): Record<EditableField, string> {
   const out = {} as Record<EditableField, string>;
   for (const key of EDITABLE_FIELDS) {
     out[key] = (lead[key] as string | null | undefined) ?? "";
   }
   return out;
+}
+
+function CardImageSection({
+  imageUrl,
+  pageNumber,
+}: {
+  imageUrl: string | null;
+  pageNumber: number | null;
+}) {
+  if (!imageUrl) return null;
+  return (
+    <section className="space-y-3">
+      <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        <IdCard className="h-3.5 w-3.5" />
+        Business card
+        {pageNumber !== null && (
+          <span className="ml-1 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground">
+            Page {pageNumber}
+          </span>
+        )}
+      </h3>
+      <div className="relative overflow-hidden rounded-lg border border-border/70 bg-background/60">
+        <a
+          href={imageUrl}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="block"
+          title="Open full-size in a new tab"
+        >
+          {/* Native <img> avoids needing R2 signed-URL hosts in remotePatterns. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={imageUrl}
+            alt="Business card"
+            className="block max-h-[280px] w-full bg-white object-contain"
+            loading="lazy"
+          />
+        </a>
+      </div>
+    </section>
+  );
 }
 
 const FIELD_GROUPS: {
@@ -363,15 +434,18 @@ function EditForm({
         <Section key={group.title} title={group.title} icon={group.icon}>
           <div className="grid gap-3 sm:grid-cols-2">
             {group.fields.map((f) => (
-              <div key={f.key} className="space-y-1.5 sm:[&:nth-child(1)]:col-span-2">
+              <div
+                key={f.key}
+                className="space-y-1.5 sm:[&:nth-child(1)]:col-span-2"
+              >
                 <Label
-                  htmlFor={`drawer-${f.key}`}
+                  htmlFor={`xleaddrawer-${f.key}`}
                   className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
                 >
                   {f.label}
                 </Label>
                 <Input
-                  id={`drawer-${f.key}`}
+                  id={`xleaddrawer-${f.key}`}
                   type={f.type ?? "text"}
                   value={draft[f.key]}
                   onChange={(e) => onChange(f.key, e.target.value)}
@@ -386,7 +460,7 @@ function EditForm({
   );
 }
 
-function ViewSections({ lead }: { lead: Lead }) {
+function ViewSections({ lead }: { lead: ExtractedLead }) {
   return (
     <>
       <Section title="Contact" icon={<Mail className="h-3.5 w-3.5" />}>
@@ -465,8 +539,26 @@ function ViewSections({ lead }: { lead: Lead }) {
           emphasize
         />
         {lead.enrichmentJson && typeof lead.enrichmentJson === "object" ? (
-          <EnrichmentJson json={lead.enrichmentJson as Record<string, unknown>} />
+          <EnrichmentJson
+            json={lead.enrichmentJson as Record<string, unknown>}
+          />
         ) : null}
+      </Section>
+
+      <Section
+        title="Extraction quality"
+        icon={<ShieldCheck className="h-3.5 w-3.5" />}
+      >
+        <div className="grid grid-cols-[120px_1fr] items-baseline gap-3 text-sm">
+          <div className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+            Confidence
+          </div>
+          <div>
+            <ConfidenceBadge confidence={lead.confidence} />
+          </div>
+        </div>
+        <Row label="Method" value={lead.extractionMethod} mono />
+        <Row label="Model" value={lead.verificationModel} mono />
       </Section>
 
       <Section title="Meta" icon={<Calendar className="h-3.5 w-3.5" />}>
@@ -474,113 +566,11 @@ function ViewSections({ lead }: { lead: Lead }) {
           label="Created"
           value={lead.createdAt ? formatDate(lead.createdAt) : null}
         />
-        <Row
-          label="Updated"
-          value={lead.updatedAt ? formatDate(lead.updatedAt) : null}
-        />
-        {lead.sourceExtractedLeadId && (
-          <div className="grid grid-cols-[120px_1fr] items-baseline gap-3 text-sm">
-            <div className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-              Source
-            </div>
-            <Link
-              href="/imports"
-              className="truncate text-sm text-primary hover:underline"
-              title={lead.sourceExtractedLeadId}
-            >
-              View originating import
-            </Link>
-          </div>
+        {lead.pageNumber !== null && lead.pageNumber !== undefined && (
+          <Row label="Source page" value={String(lead.pageNumber)} />
         )}
       </Section>
     </>
-  );
-}
-
-function CardImageSection({ leadId }: { leadId: string }) {
-  const [state, setState] = React.useState<
-    | { kind: "idle" }
-    | { kind: "loading" }
-    | { kind: "ready"; url: string; pageNumber: number | null }
-    | { kind: "none" }
-    | { kind: "error" }
-  >({ kind: "idle" });
-
-  React.useEffect(() => {
-    let cancelled = false;
-    setState({ kind: "loading" });
-    (async () => {
-      try {
-        const res = await fetch(`/api/leads/${leadId}/card-image`);
-        if (cancelled) return;
-        if (!res.ok) {
-          setState({ kind: "error" });
-          return;
-        }
-        const data = (await res.json()) as {
-          url: string | null;
-          pageNumber?: number | null;
-        };
-        if (cancelled) return;
-        if (!data.url) {
-          setState({ kind: "none" });
-          return;
-        }
-        setState({
-          kind: "ready",
-          url: data.url,
-          pageNumber: data.pageNumber ?? null,
-        });
-      } catch {
-        if (!cancelled) setState({ kind: "error" });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [leadId]);
-
-  if (state.kind === "none" || state.kind === "error" || state.kind === "idle") {
-    return null;
-  }
-
-  return (
-    <section className="space-y-3">
-      <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-        <IdCard className="h-3.5 w-3.5" />
-        Business card
-        {state.kind === "ready" && state.pageNumber !== null && (
-          <span className="ml-1 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground">
-            Page {state.pageNumber}
-          </span>
-        )}
-      </h3>
-
-      <div className="relative overflow-hidden rounded-lg border border-border/70 bg-background/60">
-        {state.kind === "loading" && (
-          <div className="aspect-[1.6/1] w-full animate-pulse bg-muted" />
-        )}
-        {state.kind === "ready" && (
-          <a
-            href={state.url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="block"
-            title="Open full-size in a new tab"
-          >
-            {/* Native <img> so we don't need to whitelist signed-URL hosts
-                in next.config.images.remotePatterns. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={state.url}
-              alt="Business card"
-              className="block max-h-[280px] w-full bg-white object-contain"
-              loading="lazy"
-            />
-          </a>
-        )}
-      </div>
-    </section>
   );
 }
 

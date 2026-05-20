@@ -280,6 +280,20 @@
     animation: ai-shimmer 2.8s linear infinite;
   }
 
+  /* Soft blurry "loading splash" on every cell of a row that's being
+     enriched, except the cell containing the AI status pill (which we
+     keep crisp so the indicator stays legible). */
+  .ai-row > td {
+    animation: ai-text-pulse 2.6s ease-in-out infinite;
+    will-change: filter, opacity;
+  }
+
+  .ai-row > td:has(.ai-pill) {
+    animation: none;
+    filter: none;
+    opacity: 1;
+  }
+
   .ai-scan-beam {
     position: absolute;
     top: 0;
@@ -387,6 +401,18 @@
   }
 }
 
+@keyframes ai-text-pulse {
+  0%,
+  100% {
+    filter: blur(1.3px);
+    opacity: 0.72;
+  }
+  50% {
+    filter: blur(2.6px);
+    opacity: 0.5;
+  }
+}
+
 @keyframes ai-dots {
   0% {
     content: "";
@@ -407,10 +433,13 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ai-row,
+  .ai-row > td,
   .ai-pill,
   .ai-pulse-icon,
   .ai-scan-beam::before,
   .ai-dots::after {
     animation: none !important;
+    filter: none !important;
+    opacity: 1 !important;
   }
 }

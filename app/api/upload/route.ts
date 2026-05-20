@@ -78,6 +78,19 @@ export async function POST(req: Request) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to upload file";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[upload] failed:", message, error);
+    // `req.formData()` throws a generic parse error when the proxy buffer
+    // truncates the body — surface a friendlier hint so the user knows
+    // what to do.
+    const isFormDataParseError =
+      /formdata|multipart|boundary/i.test(message);
+    return NextResponse.json(
+      {
+        error: isFormDataParseError
+          ? "Upload failed — file may be too large for the dev server to buffer. Try a smaller file or raise `experimental.proxyClientMaxBodySize`."
+          : message,
+      },
+      { status: 500 }
+    );
   }
 }
