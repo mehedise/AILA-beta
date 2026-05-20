@@ -5,6 +5,7 @@ import {
   desc,
   eq,
   ilike,
+  inArray,
   or,
   sql,
   type SQL,
@@ -64,6 +65,8 @@ const LEAD_SORT_COLUMNS = {
 
 export type LeadListFilters = {
   q?: string;
+  importId?: string;
+  unclassified?: boolean;
   sector?: string;
   industryGroup?: string;
   industry?: string;
@@ -198,6 +201,30 @@ export function buildLeadConditions(
     conditions.push(eq(leads.gicsSubIndustryCode, filters.subIndustry));
   }
 
+  if (filters.importId && filters.importId !== "all") {
+    conditions.push(
+      inArray(
+        leads.sourceExtractedLeadId,
+        db
+          .select({ id: extractedLeads.id })
+          .from(extractedLeads)
+          .innerJoin(imports, eq(extractedLeads.importId, imports.id))
+          .where(
+            and(
+              eq(extractedLeads.importId, filters.importId),
+              eq(imports.userId, userId)
+            )
+          )
+      )
+    );
+  }
+
+  if (filters.unclassified) {
+    conditions.push(
+      sql`coalesce(${leads.gicsClassificationKey}, '') = '' and coalesce(${leads.gicsSectorCode}, '') = ''`
+    );
+  }
+
   return conditions;
 }
 
@@ -246,6 +273,51 @@ export async function listLeads(
     sourceImportId,
     sourceImportName,
   }));
+}
+
+/** Imports that have approved workspace leads or extracted leads still needing review. */
+export async function listImportsWithApprovedOrNeedsReviewLeads(userId: string) {
+  const approvedRows = await db
+    .select({
+      id: imports.id,
+      fileName: imports.fileName,
+      createdAt: imports.createdAt,
+    })
+    .from(leads)
+    .innerJoin(
+      extractedLeads,
+      eq(leads.sourceExtractedLeadId, extractedLeads.id)
+    )
+    .innerJoin(imports, eq(extractedLeads.importId, imports.id))
+    .where(and(eq(leads.userId, userId), eq(imports.userId, userId)))
+    .orderBy(desc(imports.createdAt));
+
+  const needsReviewRows = await db
+    .select({
+      id: imports.id,
+      fileName: imports.fileName,
+      createdAt: imports.createdAt,
+    })
+    .from(extractedLeads)
+    .innerJoin(imports, eq(extractedLeads.importId, imports.id))
+    .where(
+      and(
+        eq(imports.userId, userId),
+        eq(extractedLeads.reviewStatus, "pending")
+      )
+    )
+    .orderBy(desc(imports.createdAt));
+
+  const seen = new Set<string>();
+  const out: { id: string; fileName: string; createdAt: Date }[] = [];
+  for (const row of [...approvedRows, ...needsReviewRows]) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push({ id: row.id, fileName: row.fileName, createdAt: row.createdAt });
+  }
+  return out
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .map(({ id, fileName }) => ({ id, fileName }));
 }
 
 export async function listLeadIds(userId: string, filters: LeadListFilters) {

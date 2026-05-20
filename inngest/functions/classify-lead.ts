@@ -1,10 +1,29 @@
-import { inArray } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { inngest } from "@/lib/inngest/client";
 import { db } from "@/lib/db/client";
 import { extractedLeads, imports } from "@/lib/db/schema";
 import { classifyIndustries } from "@/lib/ai/classify";
 import { gicsToDbFields } from "@/lib/taxonomy/gics-fields";
 import { shouldSkipGicsClassification } from "@/lib/taxonomy/classify-guard";
+import { markImportReadyWhenPostProcessingDone } from "@/lib/imports/finalize";
+
+function classificationJson(status: "classified" | "failed", error?: string) {
+  return {
+    classification: {
+      attempted: true,
+      status,
+      error: error ?? null,
+    },
+  };
+}
+
+async function finalizeImports(importIds: string[]) {
+  await Promise.all(
+    Array.from(new Set(importIds)).map((importId) =>
+      markImportReadyWhenPostProcessingDone(importId)
+    )
+  );
+}
 
 export const classifyLead = inngest.createFunction(
   {
@@ -53,20 +72,46 @@ export const classifyLead = inngest.createFunction(
     );
 
     if (classifiable.length === 0) {
+      await step.run("finalize-if-complete", async () => {
+        await finalizeImports(joined.map(({ lead }) => lead.importId));
+      });
       return { processed: 0, skipped: joined.length, reason: "all_filtered" };
     }
 
-    const results = await step.run("classify-batch", () =>
-      classifyIndustries(
-        classifiable.map(({ lead }) => ({
-          id: lead.id,
-          company: lead.company,
-          website: lead.website,
-          title: lead.title,
-          raw_text: lead.rawText,
-        }))
-      )
-    );
+    let results;
+    try {
+      results = await step.run("classify-batch", () =>
+        classifyIndustries(
+          classifiable.map(({ lead }) => ({
+            id: lead.id,
+            company: lead.company,
+            website: lead.website,
+            title: lead.title,
+            raw_text: lead.rawText,
+          }))
+        )
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      await step.run("mark-classification-failed", async () => {
+        await db
+          .update(extractedLeads)
+          .set({
+            enrichmentJson: sql`coalesce(${extractedLeads.enrichmentJson}, '{}'::jsonb) || ${JSON.stringify(
+              classificationJson("failed", message)
+            )}::jsonb`,
+          })
+          .where(inArray(extractedLeads.id, classifiable.map(({ lead }) => lead.id)));
+      });
+      await step.run("finalize-after-failed-classification", async () => {
+        await finalizeImports(classifiable.map(({ lead }) => lead.importId));
+      });
+      return {
+        processed: 0,
+        failed: classifiable.length,
+        error: message,
+      };
+    }
 
     await step.run("save-classifications", async () => {
       await Promise.all(
@@ -76,10 +121,17 @@ export const classifyLead = inngest.createFunction(
             .set({
               ...gicsToDbFields(result.gics),
               confidence: String(result.confidence),
+              enrichmentJson: sql`coalesce(${extractedLeads.enrichmentJson}, '{}'::jsonb) || ${JSON.stringify(
+                classificationJson("classified")
+              )}::jsonb`,
             })
             .where(inArray(extractedLeads.id, [result.id]))
         )
       );
+    });
+
+    await step.run("finalize-if-complete", async () => {
+      await finalizeImports(classifiable.map(({ lead }) => lead.importId));
     });
 
     return {

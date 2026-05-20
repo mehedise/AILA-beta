@@ -337,20 +337,26 @@ export function ExtractedLeadTable({
     });
   }, []);
 
+  const isSelectableLead = useCallback(
+    (lead: ExtractedLead) =>
+      rejectedOnly
+        ? lead.reviewStatus === "rejected"
+        : lead.reviewStatus !== "rejected",
+    [rejectedOnly]
+  );
+
   const togglePageSelection = useCallback(
     (checked: boolean) => {
       setSelectedIds((prev) => {
         const next = new Set(prev);
-        for (const lead of pagedLeads.filter(
-          (lead) => lead.reviewStatus !== "rejected"
-        )) {
+        for (const lead of pagedLeads.filter(isSelectableLead)) {
           if (checked) next.add(lead.id);
           else next.delete(lead.id);
         }
         return next;
       });
     },
-    [pagedLeads]
+    [isSelectableLead, pagedLeads]
   );
 
   const selectAll = useCallback(async () => {
@@ -382,9 +388,7 @@ export function ExtractedLeadTable({
     setSelectedIds(new Set());
   }, []);
 
-  const selectablePageLeads = pagedLeads.filter(
-    (lead) => lead.reviewStatus !== "rejected"
-  );
+  const selectablePageLeads = pagedLeads.filter(isSelectableLead);
   const allPageSelected =
     selectablePageLeads.length > 0 &&
     selectablePageLeads.every((l) => selectedIds.has(l.id));
@@ -393,7 +397,7 @@ export function ExtractedLeadTable({
   const selectionCount = selectedIds.size;
   const selectableTotal = remote
     ? totalLeads
-    : leads.filter((lead) => lead.reviewStatus !== "rejected").length;
+    : leads.filter(isSelectableLead).length;
   const allSelected =
     selectableTotal > 0 && selectionCount >= selectableTotal;
   const bulkProgressPct =

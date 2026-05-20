@@ -64,6 +64,8 @@ function parseFilters(searchParams: URLSearchParams): LeadListFilters {
   }
   return {
     q: searchParams.get("q") ?? undefined,
+    importId: searchParams.get("importId") ?? undefined,
+    unclassified: searchParams.get("unclassified") === "true",
     sector: searchParams.get("sector") ?? undefined,
     industryGroup: searchParams.get("industryGroup") ?? undefined,
     industry: searchParams.get("industry") ?? undefined,

@@ -115,13 +115,25 @@ export async function classifyIndustries(
     });
   }
 
-  // Preserve input order and fail loudly if the model missed any item.
+  // Preserve input order. If the model omits an item, keep the batch moving by
+  // assigning the first candidate with low confidence instead of failing the
+  // entire import.
   return items.map((item) => {
     const hit = byId.get(item.id);
-    if (!hit) {
-      throw new Error(`Classification missing for id: ${item.id}`);
+    if (hit) return hit;
+
+    const fallback = buildGicsCandidates(item)[0] ?? getGicsEntry(GICS_ENTRY_KEYS[0]);
+    if (!fallback) {
+      throw new Error(`No fallback GICS candidate for id: ${item.id}`);
     }
-    return hit;
+
+    return {
+      id: item.id,
+      classificationKey: fallback.key,
+      confidence: 0.2,
+      reasoning: "Fallback classification used because the model omitted this lead from the batch response.",
+      gics: fallback,
+    };
   });
 }
 

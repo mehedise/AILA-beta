@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  AlertCircle,
   ArrowRight,
   CheckCircle2,
   Clock,
@@ -27,8 +28,13 @@ import type { Import } from "@/lib/db/schema";
 
 const LARGE_PRERENDER_BATCH_SIZE = 50;
 
+type ImportListRow = Import & {
+  approvedLeadCount: number;
+  unclassifiedLeadCount: number;
+};
+
 export default function ImportsPage() {
-  const [imports, setImports] = useState<Import[]>([]);
+  const [imports, setImports] = useState<ImportListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkConfirm, setBulkConfirm] = useState(false);
@@ -316,6 +322,7 @@ export default function ImportsPage() {
                   <TableHead className="w-[240px]">File</TableHead>
                   <TableHead className="w-20">Type</TableHead>
                   <TableHead className="w-56">Progress</TableHead>
+                  <TableHead className="w-44">Leads</TableHead>
                   <TableHead className="w-44">Created</TableHead>
                   <TableHead className="w-20" />
                 </TableRow>
@@ -357,6 +364,12 @@ export default function ImportsPage() {
                           importRow={imp}
                         />
                       </TableCell>
+                      <TableCell>
+                        <LeadCountBadges
+                          approved={imp.approvedLeadCount}
+                          unclassified={imp.unclassifiedLeadCount}
+                        />
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {new Date(imp.createdAt).toLocaleString()}
                       </TableCell>
@@ -376,6 +389,41 @@ export default function ImportsPage() {
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function LeadCountBadges({
+  approved,
+  unclassified,
+}: {
+  approved: number;
+  unclassified: number;
+}) {
+  return (
+    <div className="flex min-w-[140px] flex-col gap-1.5 text-xs">
+      <span
+        className={cn(
+          "inline-flex w-fit items-center gap-1.5 rounded-full border px-2 py-1 font-medium",
+          approved > 0
+            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+            : "border-border bg-muted/50 text-muted-foreground"
+        )}
+      >
+        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+        {approved} approved
+      </span>
+      <span
+        className={cn(
+          "inline-flex w-fit items-center gap-1.5 rounded-full border px-2 py-1 font-medium",
+          unclassified > 0
+            ? "border-amber-200 bg-amber-50 text-amber-700"
+            : "border-border bg-muted/50 text-muted-foreground"
+        )}
+      >
+        <AlertCircle className="h-3.5 w-3.5" aria-hidden />
+        {unclassified} unclassified
+      </span>
     </div>
   );
 }

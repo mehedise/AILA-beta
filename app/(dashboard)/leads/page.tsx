@@ -138,6 +138,8 @@ const SORTABLE_COLUMNS: SortableColumn[] = [
 
 type Filters = {
   q: string;
+  importId: string;
+  unclassified: boolean;
   sector: string;
   industryGroup: string;
   industry: string;
@@ -152,6 +154,8 @@ const EMPTY_COLUMNS: Filters["columns"] = COLUMN_FILTERS.reduce(
 
 const EMPTY_FILTERS: Filters = {
   q: "",
+  importId: "all",
+  unclassified: false,
   sector: "all",
   industryGroup: "all",
   industry: "all",
@@ -160,7 +164,7 @@ const EMPTY_FILTERS: Filters = {
 };
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200] as const;
-const DEFAULT_PAGE_SIZE = 25;
+const DEFAULT_PAGE_SIZE = 10;
 
 function truncateImportName(name: string) {
   return name.length > 30 ? `${name.slice(0, 30)}...` : name;
@@ -188,6 +192,9 @@ export default function LeadsPage() {
     enrichedAndClassified: number;
   } | null>(null);
   const [countryOptions, setCountryOptions] = useState<string[]>([]);
+  const [importOptions, setImportOptions] = useState<
+    { id: string; fileName: string }[]
+  >([]);
 
   const openLead = useCallback((lead: LeadWithSourceImport) => {
     setActiveLead(lead);
@@ -362,6 +369,8 @@ export default function LeadsPage() {
   const buildParams = useCallback((f: Filters) => {
     const params = new URLSearchParams();
     if (f.q) params.set("q", f.q);
+    if (f.importId && f.importId !== "all") params.set("importId", f.importId);
+    if (f.unclassified) params.set("unclassified", "true");
     if (f.sector && f.sector !== "all") params.set("sector", f.sector);
     if (f.industryGroup && f.industryGroup !== "all")
       params.set("industryGroup", f.industryGroup);
@@ -425,6 +434,19 @@ export default function LeadsPage() {
             typeof c === "string" && c.trim().length > 0
           ));
         }
+        if (Array.isArray(data.imports)) {
+          setImportOptions(
+            data.imports.filter(
+              (
+                imp: unknown
+              ): imp is { id: string; fileName: string } =>
+                typeof imp === "object" &&
+                imp !== null &&
+                typeof (imp as { id?: string }).id === "string" &&
+                typeof (imp as { fileName?: string }).fileName === "string"
+            )
+          );
+        }
       } catch {
         // Facets are a UX nicety; failing silently keeps filters usable.
       }
@@ -479,6 +501,12 @@ export default function LeadsPage() {
 
   const setQ = (v: string) => setFilters((f) => ({ ...f, q: v }));
 
+  const setImportId = (v: string | null) =>
+    setFilters((f) => ({ ...f, importId: v ?? "all" }));
+
+  const setUnclassified = (checked: boolean) =>
+    setFilters((f) => ({ ...f, unclassified: checked }));
+
   const setSector = (v: string | null) =>
     setFilters((f) => ({
       ...f,
@@ -520,6 +548,21 @@ export default function LeadsPage() {
         label: `Search: ${filters.q}`,
         clear: () => setQ(""),
       });
+    if (filters.importId !== "all") {
+      const imp = importOptions.find((x) => x.id === filters.importId);
+      pills.push({
+        id: "import",
+        label: `Import: ${imp ? truncateImportName(imp.fileName) : filters.importId}`,
+        clear: () => setImportId("all"),
+      });
+    }
+    if (filters.unclassified) {
+      pills.push({
+        id: "unclassified",
+        label: "Unclassified",
+        clear: () => setUnclassified(false),
+      });
+    }
     if (filters.sector !== "all") {
       const s = GICS_SECTORS.find((x) => x.code === filters.sector);
       pills.push({
@@ -569,6 +612,7 @@ export default function LeadsPage() {
     return pills;
   }, [
     filters,
+    importOptions,
     industryGroupOptions,
     industryOptions,
     subIndustryOptions,
@@ -922,6 +966,72 @@ export default function LeadsPage() {
                     </div>
                   );
                 })}
+                <div className="space-y-1.5">
+                  <Label htmlFor="filter-import" className="text-xs">
+                    Import
+                  </Label>
+                  <Select
+                    value={filters.importId}
+                    onValueChange={setImportId}
+                    disabled={!showAdvanced}
+                  >
+                    <SelectTrigger id="filter-import" className="w-full">
+                      <SelectValue>
+                        {(value) =>
+                          !value || value === "all" ? (
+                            <span className="text-muted-foreground">
+                              Filter import…
+                            </span>
+                          ) : (
+                            truncateImportName(
+                              importOptions.find((imp) => imp.id === value)
+                                ?.fileName ?? "Import"
+                            )
+                          )
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent
+                      alignItemWithTrigger={false}
+                      className="w-auto min-w-[var(--anchor-width)] max-w-[460px]"
+                    >
+                      <SelectItem value="all">All imports</SelectItem>
+                      {importOptions.map((imp) => (
+                        <SelectItem key={imp.id} value={imp.id}>
+                          <span className="truncate" title={imp.fileName}>
+                            {truncateImportName(imp.fileName)}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="filter-unclassified" className="text-xs">
+                    Classification
+                  </Label>
+                  <label
+                    htmlFor="filter-unclassified"
+                    className={cn(
+                      "inline-flex h-10 w-full cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors",
+                      filters.unclassified
+                        ? "border-amber-300 bg-amber-50 text-amber-800"
+                        : "border-border/80 bg-card text-muted-foreground hover:border-amber-300 hover:bg-amber-50/60 hover:text-foreground",
+                      !showAdvanced && "pointer-events-none"
+                    )}
+                  >
+                    <Checkbox
+                      id="filter-unclassified"
+                      checked={filters.unclassified}
+                      onCheckedChange={(checked) =>
+                        setUnclassified(checked === true)
+                      }
+                      className="h-4 w-4"
+                      tabIndex={showAdvanced ? undefined : -1}
+                    />
+                    Unclassified
+                  </label>
+                </div>
               </div>
             </div>
           </div>

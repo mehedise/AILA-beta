@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { leads } from "@/lib/db/schema";
+import { listImportsWithApprovedOrNeedsReviewLeads } from "@/lib/db/queries/leads";
 
 export async function GET() {
   const { userId } = await auth();
@@ -10,10 +11,13 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const countryRows = await db
-    .selectDistinct({ country: leads.country })
-    .from(leads)
-    .where(and(eq(leads.userId, userId), sql`${leads.country} is not null`));
+  const [countryRows, importRows] = await Promise.all([
+    db
+      .selectDistinct({ country: leads.country })
+      .from(leads)
+      .where(and(eq(leads.userId, userId), sql`${leads.country} is not null`)),
+    listImportsWithApprovedOrNeedsReviewLeads(userId),
+  ]);
 
   const countries = Array.from(
     new Set(
@@ -23,5 +27,5 @@ export async function GET() {
     )
   ).sort((a, b) => a.localeCompare(b));
 
-  return NextResponse.json({ countries });
+  return NextResponse.json({ countries, imports: importRows });
 }

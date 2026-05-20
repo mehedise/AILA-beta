@@ -1,34 +1,16 @@
-import { and, count, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { inngest } from "@/lib/inngest/client";
 import { db } from "@/lib/db/client";
 import { extractedLeads, imports } from "@/lib/db/schema";
 import { enrichLead, mergeEnrichment } from "@/lib/ai/enrich";
 import { logoFromWebsite, normalizeWebsite } from "@/lib/excel/normalize";
-
-async function markImportReadyWhenEnrichmentDone(importId: string) {
-  const [pendingRow] = await db
-    .select({ pending: count() })
-    .from(extractedLeads)
-    .where(
-      and(
-        eq(extractedLeads.importId, importId),
-        eq(extractedLeads.enrichmentStatus, "pending")
-      )
-    );
-
-  if (Number(pendingRow?.pending ?? 0) > 0) return;
-
-  await db
-    .update(imports)
-    .set({ status: "ready_for_review" })
-    .where(and(eq(imports.id, importId), eq(imports.status, "enriching")));
-}
+import { markImportReadyWhenPostProcessingDone } from "@/lib/imports/finalize";
 
 export const enrichLeadFn = inngest.createFunction(
   {
     id: "enrich-lead",
     retries: 3,
-    concurrency: { limit: 8 },
+    concurrency: { limit: 20 },
     triggers: [{ event: "lead/enrich.requested" }],
   },
   async ({ event, step }) => {
@@ -57,7 +39,7 @@ export const enrichLeadFn = inngest.createFunction(
 
     if (lead.enrichmentStatus === "enriched") {
       await step.run("finalize-if-complete", () =>
-        markImportReadyWhenEnrichmentDone(lead.importId)
+        markImportReadyWhenPostProcessingDone(lead.importId)
       );
       await step.sendEvent("classify", {
         name: "lead/classify.requested",
@@ -103,7 +85,7 @@ export const enrichLeadFn = inngest.createFunction(
           .where(eq(extractedLeads.id, extractedLeadId));
       });
       await step.run("finalize-after-failed", () =>
-        markImportReadyWhenEnrichmentDone(lead.importId)
+        markImportReadyWhenPostProcessingDone(lead.importId)
       );
       // continue to classify anyway so the lead still gets a sector
       await step.sendEvent("classify", {
@@ -165,7 +147,7 @@ export const enrichLeadFn = inngest.createFunction(
     }
 
     await step.run("finalize-after-enriched", () =>
-      markImportReadyWhenEnrichmentDone(lead.importId)
+      markImportReadyWhenPostProcessingDone(lead.importId)
     );
 
     await step.sendEvent("classify", {

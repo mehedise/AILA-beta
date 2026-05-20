@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -35,6 +36,7 @@ type ImportStats = {
 
 const DEFAULT_LEADS_PAGE_SIZE = 10;
 const LARGE_PRERENDER_BATCH_SIZE = 50;
+const ENRICHMENT_CONCURRENCY = 20;
 
 async function readJsonResponse(res: Response) {
   const text = await res.text();
@@ -383,21 +385,25 @@ export default function ImportDetailPage() {
 
   const processingComplete = !isProcessing;
   const savingComplete = !isProcessing && !isSaving;
+  const classificationPending =
+    leadStats.total > 0 && leadStats.classified < leadStats.total;
   const enrichmentActive =
-    imp.status === "enriching" &&
+    !importStopped &&
     savingComplete &&
-    leadStats.enrichmentTotal > 0 &&
-    leadStats.enrichmentPending > 0;
+    leadStats.total > 0 &&
+    (imp.status === "enriching" ||
+      leadStats.enrichmentPending > 0 ||
+      classificationPending);
   const enrichmentComplete =
     savingComplete &&
-    leadStats.enrichmentTotal > 0 &&
-    leadStats.enrichmentPending === 0;
-  const enrichmentProgressTotal = enrichmentActive
-    ? Math.max(enrichmentRunTotal, leadStats.enrichmentPending)
-    : leadStats.enrichmentTotal;
-  const enrichmentProgressDone = enrichmentActive
-    ? Math.max(0, enrichmentProgressTotal - leadStats.enrichmentPending)
-    : leadStats.enrichmentDone;
+    leadStats.total > 0 &&
+    leadStats.enrichmentPending === 0 &&
+    !classificationPending;
+  const enrichmentProgressTotal = leadStats.total;
+  const enrichmentProgressDone = Math.min(
+    enrichmentProgressTotal,
+    leadStats.classified
+  );
   const enrichmentPct =
     enrichmentProgressTotal > 0
       ? Math.min(
@@ -405,6 +411,27 @@ export default function ImportDetailPage() {
           Math.round((enrichmentProgressDone / enrichmentProgressTotal) * 100)
         )
       : 0;
+  const enrichmentInFlight = enrichmentActive
+    ? Math.min(
+        ENRICHMENT_CONCURRENCY,
+        Math.max(1, leadStats.enrichmentPending),
+        Math.max(0, enrichmentProgressTotal - enrichmentProgressDone)
+      )
+    : 0;
+  const enrichmentVisualPct =
+    enrichmentActive && enrichmentProgressTotal > 0
+      ? Math.min(
+          99,
+          Math.max(
+            enrichmentPct,
+            Math.round(
+              ((enrichmentProgressDone + enrichmentInFlight * 0.35) /
+                enrichmentProgressTotal) *
+                100
+            )
+          )
+        )
+      : enrichmentPct;
 
   type Phase = "processing" | "saving" | "enrichment" | "complete";
   const phase: Phase = isProcessing
@@ -432,7 +459,7 @@ export default function ImportDetailPage() {
   const hasDetectedItems = imp.totalItems > 0;
   const hasSavedRows = imp.processedItems > 0 || leadStats.total > 0;
   const largePdfMessage = getLargePdfActivityMessage(imp);
-  const estimatedCompletionSeconds = estimateLargePdfSeconds(
+  const estimatedCompletionSeconds = estimateImportSeconds(
     imp,
     enrichmentActive ? leadStats.enrichmentPending : 0
   );
@@ -452,7 +479,9 @@ export default function ImportDetailPage() {
       : enrichmentActive
         ? [
             largePdfMessage,
-            "AILA is enriching lead details…",
+            leadStats.enrichmentPending > 0
+              ? "AILA is enriching lead details…"
+              : null,
             "Classifying leads with GICS…",
             "Checking missing company and contact data…",
           ].filter((message): message is string => Boolean(message))
@@ -464,7 +493,15 @@ export default function ImportDetailPage() {
       : 0;
 
   const enrichmentSecondsRemaining = enrichmentActive
-    ? Math.max(1, Math.ceil((leadStats.enrichmentPending * 6) / 8))
+    ? Math.max(
+        1,
+        Math.ceil(
+          ((leadStats.enrichmentPending +
+            Math.max(0, leadStats.total - leadStats.classified)) *
+            6) /
+            ENRICHMENT_CONCURRENCY
+        )
+      )
     : 0;
 
   const latestApproveJob = bulkJobs.find(
@@ -528,16 +565,21 @@ export default function ImportDetailPage() {
 
             <div className="flex flex-col items-end gap-2">
               <div className="flex flex-wrap items-center justify-end gap-2">
-              {leadStats.pending > 0 && (
-                <Link
-                  href={`/imports/${id}/review/${
-                    leads.find((l) => l.reviewStatus === "pending")?.id ?? ""
-                  }`}
-                  className={cn(buttonVariants())}
-                >
-                  Start review ({leadStats.pending} pending)
-                </Link>
-              )}
+              {leadStats.pending > 0 &&
+                (classificationPending ? (
+                  <Button type="button" disabled>
+                    Start review ({leadStats.pending} pending)
+                  </Button>
+                ) : (
+                  <Link
+                    href={`/imports/${id}/review/${
+                      leads.find((l) => l.reviewStatus === "pending")?.id ?? ""
+                    }`}
+                    className={cn(buttonVariants())}
+                  >
+                    Start review ({leadStats.pending} pending)
+                  </Link>
+                ))}
               <Button
                 type="button"
                 variant="secondary"
@@ -545,7 +587,8 @@ export default function ImportDetailPage() {
                 disabled={
                   approvingAll ||
                   Boolean(activeApproveJob) ||
-                  leadStats.pending === 0
+                  leadStats.pending === 0 ||
+                  classificationPending
                 }
                 className="border-transparent text-[color:color-mix(in_oklab,var(--brand-green)_70%,black)] shadow-[0_1px_2px_rgba(15,40,30,0.08)] hover:brightness-105 disabled:opacity-60"
                 style={{
@@ -656,7 +699,7 @@ export default function ImportDetailPage() {
                 />
                 <span className="h-px flex-1 bg-border/70" />
                 <PhaseStep
-                  label="AI Enrich"
+                  label="AI Classify & Enrich"
                   state={
                     phase === "enrichment"
                       ? "active"
@@ -672,7 +715,9 @@ export default function ImportDetailPage() {
                   <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1.5">
                       <Sparkles className="h-3.5 w-3.5 text-[var(--brand-green)]" />
-                      Pre-rendering pages
+                      {imp.sourceType === "pdf"
+                        ? "Pre-rendering pages"
+                        : "Processing spreadsheet"}
                     </span>
                     <span className="inline-flex items-center gap-2 tabular-nums">
                       <span>
@@ -768,11 +813,14 @@ export default function ImportDetailPage() {
                   <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1.5">
                       <Sparkles className="h-3.5 w-3.5 text-[var(--brand-marigold)]" />
-                      AI Enrichment in progress
+                      AI Classify & Enrich in progress
+                      <span className="text-[11px] font-normal text-muted-foreground/80">
+                        · Up to {ENRICHMENT_CONCURRENCY} in parallel
+                      </span>
                     </span>
                     <span className="inline-flex items-center gap-2 tabular-nums">
                       <span>
-                        {enrichmentPct}% · {enrichmentProgressDone} /{" "}
+                        {enrichmentVisualPct}% · {enrichmentProgressDone} /{" "}
                         {enrichmentProgressTotal}
                       </span>
                       <span
@@ -797,22 +845,19 @@ export default function ImportDetailPage() {
                     <div
                       className="h-full animate-pulse rounded-full transition-[width] duration-500"
                       style={{
-                        width: `${enrichmentPct}%`,
+                        width: `${enrichmentVisualPct}%`,
                         background:
                           "linear-gradient(90deg, var(--brand-marigold), var(--brand-green))",
                       }}
                     />
                   </div>
-                  <p className="mt-1.5 text-[11px] text-muted-foreground">
-                    AILA is enriching your leads with AI — up to 8 in parallel.
-                  </p>
                 </div>
               )}
 
               {phase === "complete" && enrichmentComplete && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Check className="h-3.5 w-3.5 text-[var(--success)]" />
-                  Saved and AI enriched — ready for review.
+                  Saved, classified, and enriched — ready for review.
                 </div>
               )}
 
@@ -940,6 +985,10 @@ export default function ImportDetailPage() {
 function ImportActivityText({ messages }: { messages: string[] }) {
   const [index, setIndex] = useState(0);
   const safeIndex = messages.length > 0 ? index % messages.length : 0;
+  const message = messages[safeIndex] ?? "";
+  const displayMessage = /^AILA\b/i.test(message)
+    ? message
+    : `AILA ${message.charAt(0).toLowerCase()}${message.slice(1)}`;
 
   useEffect(() => {
     if (messages.length <= 1) return;
@@ -953,9 +1002,17 @@ function ImportActivityText({ messages }: { messages: string[] }) {
 
   return (
     <p className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-      <Sparkles className="h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
-      <span key={messages[safeIndex]} className="animate-pulse">
-        {messages[safeIndex]}
+      <Image
+        src="/sparkles-loop-loader-ai.png"
+        alt=""
+        width={40}
+        height={40}
+        className="h-10 w-10 shrink-0"
+        aria-hidden
+        unoptimized
+      />
+      <span key={message} className="animate-pulse">
+        {displayMessage}
       </span>
     </p>
   );
@@ -1092,6 +1149,45 @@ function getLargePdfBatchMessage(imp: Import): string | null {
   return `Pre-render batches: ${completedBatches}/${totalBatches} complete, batch ${runningBatch} running.`;
 }
 
+function estimateImportSeconds(
+  imp: Import,
+  enrichmentRemaining: number = 0
+): number {
+  if (imp.sourceType === "xlsx") {
+    return estimateSpreadsheetSeconds(imp, enrichmentRemaining);
+  }
+  return estimateLargePdfSeconds(imp, enrichmentRemaining);
+}
+
+function estimateSpreadsheetSeconds(
+  imp: Import,
+  enrichmentRemaining: number = 0
+): number {
+  const totalRows = Math.max(0, imp.totalItems ?? 0);
+  const savedRows = Math.min(totalRows, Math.max(0, imp.processedItems ?? 0));
+  const remainingRows = Math.max(0, totalRows - savedRows);
+  const enrichmentSeconds =
+    (enrichmentRemaining * 6) / ENRICHMENT_CONCURRENCY;
+
+  if (imp.status === "enriching") {
+    return Math.max(1, Math.round(enrichmentSeconds));
+  }
+
+  // Before the parser has detected rows, keep the timer short and explicit.
+  if (totalRows === 0) {
+    return Math.max(10, Math.round(20 + enrichmentSeconds));
+  }
+
+  // XLSX imports mostly normalize and insert rows, so they should not use the
+  // much slower large-PDF per-page estimate.
+  const rowSeconds = imp.processedItems > 0 ? 0.45 : 0.65;
+  const startupSeconds = imp.processedItems > 0 ? 0 : 8;
+  return Math.max(
+    1,
+    Math.round(startupSeconds + remainingRows * rowSeconds + enrichmentSeconds)
+  );
+}
+
 function estimateLargePdfSeconds(
   imp: Import,
   enrichmentRemaining: number = 0
@@ -1105,8 +1201,9 @@ function estimateLargePdfSeconds(
   const remainingPreparation = Math.max(0, totalPages - prepared);
   const remainingExtraction = Math.max(0, totalPages - extracted);
 
-  // Enrichment is concurrent (limit 8) so divide.
-  const enrichmentSeconds = (enrichmentRemaining * 6) / 8;
+  // Enrichment is concurrent, so divide by the configured worker limit.
+  const enrichmentSeconds =
+    (enrichmentRemaining * 6) / ENRICHMENT_CONCURRENCY;
 
   const seconds =
     imp.status === "enriching"

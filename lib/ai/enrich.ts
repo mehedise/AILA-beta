@@ -1,16 +1,8 @@
 import OpenAI from "openai";
 import { z } from "zod";
-import { zodResponseFormat, zodTextFormat } from "openai/helpers/zod";
+import { zodResponseFormat } from "openai/helpers/zod";
 
 const ENRICH_MODEL = process.env.OPENAI_ENRICH_MODEL || "gpt-4.1-mini";
-const SEARCH_MODEL = process.env.OPENAI_ENRICH_SEARCH_MODEL || ENRICH_MODEL;
-
-// Web search via the Responses API costs ~$25 / 1,000 calls — by far the
-// dominant per-lead cost. Disabled by default; flip `ENRICH_USE_SEARCH=1`
-// in the environment to opt in.
-const USE_WEB_SEARCH =
-  (process.env.ENRICH_USE_SEARCH ?? "").toLowerCase() === "1" ||
-  (process.env.ENRICH_USE_SEARCH ?? "").toLowerCase() === "true";
 
 export const LeadEnrichmentSchema = z.object({
   displayName: z.string().nullable(),
@@ -105,66 +97,30 @@ const FIELD_LABELS: Record<keyof EnrichmentInput, string> = {
   employeeHeadcount: "Employee Headcount",
 };
 
-function missingFields(input: EnrichmentInput): string[] {
-  return (Object.keys(FIELD_LABELS) as (keyof EnrichmentInput)[])
-    .filter((k) => !input[k] || String(input[k]).trim() === "")
-    .map((k) => FIELD_LABELS[k]);
+const INFERENCE_FILLABLE_FIELDS = new Set<keyof EnrichmentInput>([
+  "displayName",
+  "firstName",
+  "lastName",
+  "title",
+  "company",
+  "website",
+  "country",
+  "annualRevenue",
+  "employeeHeadcount",
+]);
+
+function missingFieldKeys(input: EnrichmentInput): (keyof EnrichmentInput)[] {
+  return (Object.keys(FIELD_LABELS) as (keyof EnrichmentInput)[]).filter(
+    (k) => !input[k] || String(input[k]).trim() === ""
+  );
 }
 
-async function trySearchEnabledEnrichment(
-  payload: EnrichmentInput,
-  missing: string[]
-): Promise<LeadEnrichment | null> {
-  if (!USE_WEB_SEARCH) return null;
-  const openai = getOpenAI();
-  // Responses API may not be present on very old SDKs. v6+ supports it.
-  if (!openai.responses?.parse) return null;
+function labelsFor(keys: (keyof EnrichmentInput)[]): string[] {
+  return keys.map((key) => FIELD_LABELS[key]);
+}
 
-  try {
-    const res = await openai.responses.parse({
-      model: SEARCH_MODEL,
-      tools: [{ type: "web_search_preview" }],
-      input: [
-        {
-          role: "system",
-          content:
-            "You are a B2B lead enrichment assistant. " +
-            "You are given a partial lead. Use the web search tool to find authoritative public information " +
-            "(company website, LinkedIn, Crunchbase, news articles, regulatory filings) to fill MISSING fields ONLY. " +
-            "Never overwrite fields that are already present. If a field cannot be confirmed, return null. " +
-            "Return the FULL lead with both supplied and newly found fields. " +
-            "For annualRevenue use ranges like '$1M-$10M' if exact is unknown. " +
-            "For employeeHeadcount use ranges like '11-50'. " +
-            "In fieldSources, write a short citation/URL for each field you filled.",
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: `Known lead:\n${JSON.stringify(payload, null, 2)}`,
-            },
-            {
-              type: "input_text",
-              text: `Missing fields to fill if you can confirm: ${missing.join(", ")}`,
-            },
-          ],
-        },
-      ],
-      text: {
-        format: zodTextFormat(LeadEnrichmentSchema, "lead_enrichment"),
-      },
-    });
-    return res.output_parsed ?? null;
-  } catch (err) {
-    // Don't crash the whole enrichment if the Responses API rejects the
-    // request (e.g. model doesn't support web_search_preview, account
-    // doesn't have access, rate limited, etc.). Surface to logs so we can
-    // see why we fell back to plain inference.
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[enrich] Responses API search failed: ${message}`);
-    return null;
-  }
+export function needsInferenceEnrichment(input: EnrichmentInput): boolean {
+  return missingFieldKeys(input).some((key) => INFERENCE_FILLABLE_FIELDS.has(key));
 }
 
 async function fallbackEnrichment(
@@ -204,10 +160,10 @@ async function fallbackEnrichment(
 
 export async function enrichLead(input: EnrichmentInput): Promise<{
   enrichment: LeadEnrichment;
-  mode: "web_search" | "inference";
+  mode: "inference";
 }> {
-  const missing = missingFields(input);
-  if (missing.length === 0) {
+  const missingKeys = missingFieldKeys(input);
+  if (missingKeys.length === 0) {
     return {
       enrichment: {
         ...input,
@@ -233,10 +189,37 @@ export async function enrichLead(input: EnrichmentInput): Promise<{
     };
   }
 
-  const searched = await trySearchEnabledEnrichment(input, missing);
-  if (searched) return { enrichment: searched, mode: "web_search" };
+  const inferableMissing = missingKeys.filter((key) =>
+    INFERENCE_FILLABLE_FIELDS.has(key)
+  );
 
-  const inferred = await fallbackEnrichment(input, missing);
+  if (inferableMissing.length === 0) {
+    return {
+      enrichment: {
+        ...input,
+        displayName: input.displayName ?? null,
+        firstName: input.firstName ?? null,
+        lastName: input.lastName ?? null,
+        title: input.title ?? null,
+        company: input.company ?? null,
+        email: input.email ?? null,
+        phone: input.phone ?? null,
+        mobile: input.mobile ?? null,
+        website: input.website ?? null,
+        address: input.address ?? null,
+        city: input.city ?? null,
+        zipCode: input.zipCode ?? null,
+        country: input.country ?? null,
+        annualRevenue: input.annualRevenue ?? null,
+        employeeHeadcount: input.employeeHeadcount ?? null,
+        fieldSources: null,
+        notes: "no_inference_fillable_missing_fields",
+      },
+      mode: "inference",
+    };
+  }
+
+  const inferred = await fallbackEnrichment(input, labelsFor(inferableMissing));
   return { enrichment: inferred, mode: "inference" };
 }
 

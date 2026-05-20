@@ -1,7 +1,8 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { inngest } from "@/lib/inngest/client";
 import { db } from "@/lib/db/client";
 import { extractedLeads, imports } from "@/lib/db/schema";
+import { needsInferenceEnrichment } from "@/lib/ai/enrich";
 import { getObjectBuffer } from "@/lib/storage/r2";
 import { parseExcelBuffer } from "@/lib/excel/parse";
 import {
@@ -46,7 +47,8 @@ export const processXlsx = inngest.createFunction(
           .where(eq(imports.id, importId));
       });
 
-      const insertedIds: string[] = [];
+      const enrichmentIds: string[] = [];
+      const classifyOnlyIds: string[] = [];
 
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
@@ -93,23 +95,80 @@ export const processXlsx = inngest.createFunction(
 
           return inserted.id;
         });
-        insertedIds.push(id);
+
+        const shouldEnrich = needsInferenceEnrichment({
+          displayName: row.displayName ?? row.name,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          title: row.title,
+          company: row.company,
+          email: normalizeEmail(row.email),
+          phone: normalizePhone(row.phone),
+          mobile: normalizePhone(row.mobile),
+          website: normalizeWebsite(row.website),
+          address: row.address,
+          city: row.city,
+          zipCode: row.zipCode,
+          country: row.country,
+          annualRevenue: row.annualRevenue,
+          employeeHeadcount: row.employeeHeadcount,
+        });
+
+        if (shouldEnrich) enrichmentIds.push(id);
+        else classifyOnlyIds.push(id);
       }
 
-      await step.run("enqueue-enrich", async () => {
-        const events = insertedIds.map((extractedLeadId) => ({
-          name: "lead/enrich.requested" as const,
-          data: { extractedLeadId },
-        }));
-        if (events.length > 0) await inngest.send(events);
-      });
+      if (enrichmentIds.length === 0 && classifyOnlyIds.length === 0) {
+        await step.run("mark-ready", async () => {
+          await db
+            .update(imports)
+            .set({ status: "ready_for_review" })
+            .where(eq(imports.id, importId));
+        });
+        return { importId, rows: rows.length };
+      }
 
-      await step.run("mark-ready", async () => {
+      await step.run("mark-post-processing", async () => {
         await db
           .update(imports)
-          .set({ status: "ready_for_review" })
+          .set({ status: "enriching" })
           .where(eq(imports.id, importId));
       });
+
+      if (classifyOnlyIds.length > 0) {
+        await step.run("mark-enrichment-skipped", async () => {
+          await db
+            .update(extractedLeads)
+            .set({
+              enrichmentStatus: "skipped",
+              enrichmentJson: {
+                mode: "inference",
+                notes: "no_inference_fillable_missing_fields",
+              },
+            })
+            .where(inArray(extractedLeads.id, classifyOnlyIds));
+        });
+
+        await step.sendEvent(
+          "classify-only",
+          classifyOnlyIds.map((extractedLeadId) => ({
+            name: "lead/classify.requested" as const,
+            data: { extractedLeadId },
+          }))
+        );
+      }
+
+      if (enrichmentIds.length === 0) {
+        return { importId, rows: rows.length };
+      }
+
+      await step.sendEvent(
+        "enqueue-enrich",
+        enrichmentIds.map((extractedLeadId) => ({
+          name: "lead/enrich.requested" as const,
+          data: { extractedLeadId },
+        }))
+      );
 
       return { importId, rows: rows.length };
     } catch (err) {

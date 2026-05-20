@@ -50,8 +50,8 @@ export default function DashboardLayout({
   const pathname = usePathname();
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="hidden w-64 shrink-0 flex-col gap-6 border-r border-sidebar-border bg-sidebar p-5 text-sidebar-foreground md:flex">
+    <div className="flex h-dvh min-h-0 overflow-hidden">
+      <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col gap-6 overflow-y-auto border-r border-sidebar-border bg-sidebar p-5 text-sidebar-foreground md:flex">
         <Link href="/imports" className="block">
           <BrandMark withWordmark size={36} variant="on-dark" />
         </Link>
@@ -91,13 +91,13 @@ export default function DashboardLayout({
         </div>
       </aside>
 
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between gap-3 border-b border-border/70 bg-background/70 px-4 py-3 backdrop-blur md:hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-background/70 px-4 py-3 backdrop-blur md:hidden">
           <BrandMark withWordmark size={32} />
           <MountedUserButton size="sm" />
         </header>
 
-        <main className={cn("flex-1 overflow-auto px-5 py-6 md:px-8 md:py-8")}>
+        <main className={cn("min-h-0 flex-1 overflow-y-auto px-5 py-6 md:px-8 md:py-8")}>
           <div
             key={pathname}
             className={cn(
