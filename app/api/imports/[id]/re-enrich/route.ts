@@ -63,6 +63,7 @@ export async function POST(
   }));
 
   await inngest.send(events);
+  await db.update(imports).set({ status: "enriching" }).where(eq(imports.id, id));
 
   return NextResponse.json({ ok: true, queued: events.length });
 }

@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { imports } from "@/lib/db/schema";
+import { resolveImportSettings } from "@/lib/imports/settings";
 import { putObjectFromBuffer } from "@/lib/storage/r2";
 import { inngest } from "@/lib/inngest/client";
 import { randomUUID } from "crypto";
@@ -65,13 +66,21 @@ export async function POST(req: Request) {
         fileUrl: fileKey,
         fileKey,
         fileName: file.name,
+        fileSizeBytes: file.size,
+        processingMode: "standard",
+        importSettings: resolveImportSettings("standard"),
         status: "uploaded",
       })
       .returning();
 
     await inngest.send({
       name: "import/uploaded",
-      data: { importId, sourceType, fileKey },
+      data: {
+        importId,
+        sourceType,
+        fileKey,
+        processingMode: "standard",
+      },
     });
 
     return NextResponse.json({ import: row });

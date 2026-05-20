@@ -6,6 +6,10 @@ import { toast } from "sonner";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+const STANDARD_MAX_BYTES = 50 * 1024 * 1024;
+const MULTIPART_MAX_BYTES = 500 * 1024 * 1024;
+const LARGE_FILE_BYTES = 50 * 1024 * 1024;
+
 type Props = {
   onUploaded?: () => void;
 };
@@ -13,33 +17,167 @@ type Props = {
 export function UploadDropzone({ onUploaded }: Props) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  const uploadMultipart = useCallback(async (file: File) => {
+    const initRes = await fetch("/api/uploads/multipart/init", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fileName: file.name,
+        fileSize: file.size,
+        contentType: file.type || "application/octet-stream",
+      }),
+    });
+    const initData = await initRes.json();
+    if (!initRes.ok) {
+      throw new Error(initData.error ?? "Failed to start large upload");
+    }
+
+    const {
+      importId,
+      fileKey,
+      uploadId,
+      partSize,
+      partCount,
+      sourceType,
+      processingMode,
+    } = initData as {
+      importId: string;
+      fileKey: string;
+      uploadId: string;
+      partSize: number;
+      partCount: number;
+      sourceType: "pdf" | "xlsx";
+      processingMode: "large";
+    };
+
+    const completedParts: Array<{ partNumber: number; etag: string }> = [];
+
+    try {
+      for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
+        const partRes = await fetch("/api/uploads/multipart/part", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileKey, uploadId, partNumber }),
+        });
+        const partData = await partRes.json();
+        if (!partRes.ok) {
+          throw new Error(partData.error ?? `Failed to sign part ${partNumber}`);
+        }
+
+        const start = (partNumber - 1) * partSize;
+        const end = Math.min(start + partSize, file.size);
+        const chunk = file.slice(start, end);
+
+        let etag: string | null = null;
+        try {
+          // Fast path: upload directly to R2 via signed URL.
+          const putRes = await fetch(partData.url as string, {
+            method: "PUT",
+            body: chunk,
+          });
+          if (!putRes.ok) {
+            throw new Error(`Upload failed for part ${partNumber}`);
+          }
+          etag = putRes.headers.get("ETag")?.replace(/"/g, "") ?? null;
+        } catch {
+          // Fallback path: tunnel part upload via our API if direct fetch is
+          // blocked by CORS/network policy in the browser.
+          const fallbackRes = await fetch(
+            `/api/uploads/multipart/part?fileKey=${encodeURIComponent(
+              fileKey
+            )}&uploadId=${encodeURIComponent(uploadId)}&partNumber=${partNumber}`,
+            {
+              method: "PUT",
+              body: chunk,
+            }
+          );
+          const fallbackData = await fallbackRes
+            .json()
+            .catch(() => ({ error: "Multipart fallback failed" }));
+          if (!fallbackRes.ok) {
+            throw new Error(
+              fallbackData.error ?? `Upload failed for part ${partNumber}`
+            );
+          }
+          etag = String(fallbackData.etag ?? "").replace(/"/g, "") || null;
+        }
+
+        if (!etag) throw new Error(`Missing ETag for part ${partNumber}`);
+        completedParts.push({ partNumber, etag });
+        setProgress(Math.round((partNumber / partCount) * 100));
+      }
+
+      const completeRes = await fetch("/api/uploads/multipart/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          importId,
+          fileKey,
+          fileName: file.name,
+          fileSize: file.size,
+          sourceType,
+          uploadId,
+          parts: completedParts,
+          processingMode,
+        }),
+      });
+      const completeData = await completeRes.json();
+      if (!completeRes.ok) {
+        throw new Error(completeData.error ?? "Failed to finalize upload");
+      }
+    } catch (err) {
+      await fetch("/api/uploads/multipart/abort", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileKey, uploadId }),
+      }).catch(() => undefined);
+      throw err;
+    }
+  }, []);
+
+  const uploadStandard = useCallback(async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/upload", { method: "POST", body: form });
+    const raw = await res.text();
+    let data: { error?: string } = {};
+    if (raw) {
+      try {
+        data = JSON.parse(raw) as { error?: string };
+      } catch {
+        data = { error: "Server returned an invalid response" };
+      }
+    }
+    if (!res.ok) throw new Error(data.error ?? "Upload failed");
+  }, []);
 
   const upload = useCallback(
     async (file: File) => {
+      if (file.size > MULTIPART_MAX_BYTES) {
+        toast.error("File exceeds 500MB limit");
+        return;
+      }
+
       setUploading(true);
+      setProgress(0);
       try {
-        const form = new FormData();
-        form.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: form });
-        const raw = await res.text();
-        let data: { error?: string } = {};
-        if (raw) {
-          try {
-            data = JSON.parse(raw) as { error?: string };
-          } catch {
-            data = { error: "Server returned an invalid response" };
-          }
+        if (file.size > LARGE_FILE_BYTES) {
+          await uploadMultipart(file);
+        } else {
+          await uploadStandard(file);
         }
-        if (!res.ok) throw new Error(data.error ?? "Upload failed");
         toast.success(`Uploaded ${file.name}`);
         onUploaded?.();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Upload failed");
       } finally {
         setUploading(false);
+        setProgress(0);
       }
     },
-    [onUploaded]
+    [onUploaded, uploadMultipart, uploadStandard]
   );
 
   return (
@@ -72,9 +210,7 @@ export function UploadDropzone({ onUploaded }: Props) {
         }}
       />
 
-      <div
-        className="relative flex h-14 w-14 items-center justify-center rounded-md border border-brand-marigold/30 bg-brand-marigold-soft/60 text-brand-green shadow-sm"
-      >
+      <div className="relative flex h-14 w-14 items-center justify-center rounded-md border border-brand-marigold/30 bg-brand-marigold-soft/60 text-brand-green shadow-sm">
         <Upload className="h-6 w-6" />
       </div>
 
@@ -93,8 +229,24 @@ export function UploadDropzone({ onUploaded }: Props) {
           <FileText className="h-3 w-3" /> PDF
         </span>
         <span className="text-muted-foreground/70">·</span>
-        <span>Up to 50&nbsp;MB</span>
+        <span>Up to 50&nbsp;MB direct · 500&nbsp;MB large PDF</span>
       </div>
+
+      {uploading && progress > 0 && (
+        <div className="relative w-full max-w-xs space-y-1">
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${progress}%`,
+                background:
+                  "linear-gradient(90deg, var(--brand-green), var(--brand-marigold))",
+              }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">{progress}% uploaded</p>
+        </div>
+      )}
 
       <label
         className={cn(
@@ -103,7 +255,7 @@ export function UploadDropzone({ onUploaded }: Props) {
           uploading && "pointer-events-none opacity-70"
         )}
       >
-        {uploading ? "Uploading…" : "Choose file"}
+        {uploading ? (progress > 0 ? `Uploading ${progress}%…` : "Uploading…") : "Choose file"}
         <input
           type="file"
           className="hidden"

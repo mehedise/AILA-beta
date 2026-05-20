@@ -22,14 +22,30 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  ANNUAL_REVENUE_OPTIONS,
+  HEADCOUNT_OPTIONS,
+} from "@/lib/leads/firmographic-options";
 import { cn } from "@/lib/utils";
 import type { Lead } from "@/lib/db/schema";
 
+export type LeadWithSourceImport = Lead & {
+  sourceImportId?: string | null;
+  sourceImportName?: string | null;
+};
+
 type Props = {
-  lead: Lead | null;
+  lead: LeadWithSourceImport | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onUpdate?: (lead: Lead) => void;
+  onUpdate?: (lead: LeadWithSourceImport) => void;
   onDelete?: (id: string) => void;
 };
 
@@ -52,6 +68,8 @@ const EDITABLE_FIELDS = [
 ] as const;
 
 type EditableField = (typeof EDITABLE_FIELDS)[number];
+
+const EMPTY_SELECT_VALUE = "__empty";
 
 export function LeadDetailDrawer({
   lead,
@@ -98,8 +116,8 @@ function DrawerBody({
   onDelete,
   onClose,
 }: {
-  lead: Lead;
-  onUpdate?: (lead: Lead) => void;
+  lead: LeadWithSourceImport;
+  onUpdate?: (lead: LeadWithSourceImport) => void;
   onDelete?: (id: string) => void;
   onClose: () => void;
 }) {
@@ -133,7 +151,9 @@ function DrawerBody({
         setError(data.error ?? "Failed to save");
         return;
       }
-      if (data.lead) onUpdate?.(data.lead as Lead);
+      if (data.lead) {
+        onUpdate?.({ ...lead, ...(data.lead as Lead) });
+      }
       setMode("view");
     } finally {
       setSaving(false);
@@ -208,8 +228,6 @@ function DrawerBody({
       </header>
 
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-        <CardImageSection leadId={lead.id} />
-
         {mode === "edit" ? (
           <EditForm draft={draft} onChange={setField} />
         ) : (
@@ -313,7 +331,12 @@ function initialDraft(lead: Lead): Record<EditableField, string> {
 const FIELD_GROUPS: {
   title: string;
   icon: React.ReactNode;
-  fields: { key: EditableField; label: string; type?: string }[];
+  fields: {
+    key: EditableField;
+    label: string;
+    type?: string;
+    options?: readonly string[];
+  }[];
 }[] = [
   {
     title: "Contact",
@@ -334,8 +357,16 @@ const FIELD_GROUPS: {
     icon: <Building2 className="h-3.5 w-3.5" />,
     fields: [
       { key: "company", label: "Company" },
-      { key: "annualRevenue", label: "Annual revenue" },
-      { key: "employeeHeadcount", label: "Headcount" },
+      {
+        key: "annualRevenue",
+        label: "Annual revenue",
+        options: ANNUAL_REVENUE_OPTIONS,
+      },
+      {
+        key: "employeeHeadcount",
+        label: "Headcount",
+        options: HEADCOUNT_OPTIONS,
+      },
     ],
   },
   {
@@ -362,23 +393,69 @@ function EditForm({
       {FIELD_GROUPS.map((group) => (
         <Section key={group.title} title={group.title} icon={group.icon}>
           <div className="grid gap-3 sm:grid-cols-2">
-            {group.fields.map((f) => (
-              <div key={f.key} className="space-y-1.5 sm:[&:nth-child(1)]:col-span-2">
-                <Label
-                  htmlFor={`drawer-${f.key}`}
-                  className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
+            {group.fields.map((f) => {
+              const currentValue = draft[f.key];
+              const options =
+                f.options && currentValue && !f.options.includes(currentValue)
+                  ? [currentValue, ...f.options]
+                  : f.options;
+
+              return (
+                <div
+                  key={f.key}
+                  className="space-y-1.5 sm:[&:nth-child(1)]:col-span-2"
                 >
-                  {f.label}
-                </Label>
-                <Input
-                  id={`drawer-${f.key}`}
-                  type={f.type ?? "text"}
-                  value={draft[f.key]}
-                  onChange={(e) => onChange(f.key, e.target.value)}
-                  placeholder="—"
-                />
-              </div>
-            ))}
+                  <Label
+                    htmlFor={`drawer-${f.key}`}
+                    className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
+                  >
+                    {f.label}
+                  </Label>
+                  {options ? (
+                    <Select
+                      value={currentValue || EMPTY_SELECT_VALUE}
+                      onValueChange={(value) =>
+                        onChange(
+                          f.key,
+                          !value || value === EMPTY_SELECT_VALUE ? "" : value
+                        )
+                      }
+                    >
+                      <SelectTrigger id={`drawer-${f.key}`} className="w-full">
+                        <SelectValue>
+                          {(value) =>
+                            !value || value === EMPTY_SELECT_VALUE
+                              ? "Select..."
+                              : value
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent
+                        alignItemWithTrigger={false}
+                        className="w-auto min-w-[var(--anchor-width)]"
+                      >
+                        <SelectItem value={EMPTY_SELECT_VALUE}>
+                          Not set
+                        </SelectItem>
+                        {options.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      id={`drawer-${f.key}`}
+                      type={f.type ?? "text"}
+                      value={currentValue}
+                      onChange={(e) => onChange(f.key, e.target.value)}
+                      placeholder="—"
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </Section>
       ))}
@@ -386,7 +463,7 @@ function EditForm({
   );
 }
 
-function ViewSections({ lead }: { lead: Lead }) {
+function ViewSections({ lead }: { lead: LeadWithSourceImport }) {
   return (
     <>
       <Section title="Contact" icon={<Mail className="h-3.5 w-3.5" />}>
@@ -451,6 +528,8 @@ function ViewSections({ lead }: { lead: Lead }) {
         )}
       </Section>
 
+      <CardImageSection leadId={lead.id} />
+
       <Section
         title="AI Enrichment"
         icon={<Sparkles className="h-3.5 w-3.5" />}
@@ -478,18 +557,28 @@ function ViewSections({ lead }: { lead: Lead }) {
           label="Updated"
           value={lead.updatedAt ? formatDate(lead.updatedAt) : null}
         />
-        {lead.sourceExtractedLeadId && (
+        {lead.sourceImportId && (
           <div className="grid grid-cols-[120px_1fr] items-baseline gap-3 text-sm">
             <div className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
               Source
             </div>
-            <Link
-              href="/imports"
-              className="truncate text-sm text-primary hover:underline"
-              title={lead.sourceExtractedLeadId}
-            >
-              View originating import
-            </Link>
+            <div className="min-w-0">
+              <Link
+                href={`/imports/${lead.sourceImportId}`}
+                className="block truncate text-sm text-primary hover:underline"
+                title={lead.sourceExtractedLeadId ?? undefined}
+              >
+                View originating import
+              </Link>
+              {lead.sourceImportName && (
+                <div
+                  className="truncate text-xs text-muted-foreground"
+                  title={lead.sourceImportName}
+                >
+                  {lead.sourceImportName}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </Section>

@@ -26,12 +26,8 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const leads = await db
-    .select()
-    .from(extractedLeads)
-    .where(eq(extractedLeads.importId, id));
-
-  return NextResponse.json({ import: imp, extractedLeads: leads });
+  // Leads are paginated via GET /api/imports/[id]/leads
+  return NextResponse.json({ import: imp });
 }
 
 export async function DELETE(

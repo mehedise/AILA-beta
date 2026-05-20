@@ -1,10 +1,14 @@
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectsCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
+  UploadPartCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -129,4 +133,99 @@ export function getPublicUrl(key: string): string {
   const base = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, "");
   if (base) return `${base}/${key}`;
   return key;
+}
+
+export async function createMultipartUpload(
+  key: string,
+  contentType: string
+): Promise<string> {
+  const client = getClient();
+  const res = await client.send(
+    new CreateMultipartUploadCommand({
+      Bucket: getBucket(),
+      Key: key,
+      ContentType: contentType,
+    })
+  );
+  if (!res.UploadId) throw new Error("Failed to create multipart upload");
+  return res.UploadId;
+}
+
+export async function signUploadPartUrl(
+  key: string,
+  uploadId: string,
+  partNumber: number,
+  expiresIn = 3600
+): Promise<string> {
+  const client = getClient();
+  return getSignedUrl(
+    client,
+    new UploadPartCommand({
+      Bucket: getBucket(),
+      Key: key,
+      UploadId: uploadId,
+      PartNumber: partNumber,
+    }),
+    { expiresIn }
+  );
+}
+
+export async function uploadMultipartPartFromBuffer(
+  key: string,
+  uploadId: string,
+  partNumber: number,
+  body: Buffer
+): Promise<string> {
+  const client = getClient();
+  const res = await client.send(
+    new UploadPartCommand({
+      Bucket: getBucket(),
+      Key: key,
+      UploadId: uploadId,
+      PartNumber: partNumber,
+      Body: body,
+    })
+  );
+  const etag = res.ETag?.replace(/"/g, "");
+  if (!etag) {
+    throw new Error(`Missing ETag for part ${partNumber}`);
+  }
+  return etag;
+}
+
+export async function completeMultipartUpload(
+  key: string,
+  uploadId: string,
+  parts: Array<{ partNumber: number; etag: string }>
+): Promise<void> {
+  const client = getClient();
+  await client.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: getBucket(),
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: {
+        Parts: parts
+          .sort((a, b) => a.partNumber - b.partNumber)
+          .map((p) => ({
+            ETag: p.etag,
+            PartNumber: p.partNumber,
+          })),
+      },
+    })
+  );
+}
+
+export async function abortMultipartUpload(
+  key: string,
+  uploadId: string
+): Promise<void> {
+  const client = getClient();
+  await client.send(
+    new AbortMultipartUploadCommand({
+      Bucket: getBucket(),
+      Key: key,
+      UploadId: uploadId,
+    })
+  );
 }

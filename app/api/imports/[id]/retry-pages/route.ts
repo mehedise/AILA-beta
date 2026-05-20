@@ -2,7 +2,8 @@ import { auth } from "@clerk/nextjs/server";
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
-import { extractedLeads, imports } from "@/lib/db/schema";
+import { extractedLeads, importPageJobs, imports } from "@/lib/db/schema";
+import { getImportSettings } from "@/lib/imports/get-settings";
 import { inngest } from "@/lib/inngest/client";
 
 /**
@@ -74,17 +75,66 @@ export async function POST(
     .set({ status: "processing", error: null })
     .where(eq(imports.id, id));
 
+  const settings = getImportSettings(imp);
+  const batchSize = settings.batchSize ?? 100;
+
+  if (settings.batchExtraction || imp.processingMode === "large") {
+    const ranges: Array<{ startPage: number; endPage: number }> = [];
+    for (let i = 0; i < missing.length; i += batchSize) {
+      const chunk = missing.slice(i, i + batchSize);
+      ranges.push({
+        startPage: chunk[0],
+        endPage: chunk[chunk.length - 1],
+      });
+    }
+
+    const jobs = await db
+      .insert(importPageJobs)
+      .values(
+        ranges.map((r) => ({
+          importId: id,
+          startPage: r.startPage,
+          endPage: r.endPage,
+          status: "pending" as const,
+        }))
+      )
+      .returning();
+
+    const events = jobs.map((job) => ({
+      name: "import/pdf.page.extract.batch" as const,
+      data: {
+        importId: id,
+        fileKey: imp.fileKey,
+        jobId: job.id,
+        startPage: job.startPage,
+        endPage: job.endPage,
+      },
+    }));
+
+    const CHUNK = 50;
+    for (let i = 0; i < events.length; i += CHUNK) {
+      await inngest.send(events.slice(i, i + CHUNK));
+    }
+
+    return NextResponse.json({
+      ok: true,
+      queued: missing.length,
+      batches: events.length,
+      totalPages: imp.totalItems,
+      alreadyCompleted: completed.size,
+    });
+  }
+
   const events = missing.map((pageNumber) => ({
     name: "import/pdf.page.extract" as const,
     data: {
       importId: id,
       fileKey: imp.fileKey,
       pageNumber,
+      autoEnrich: settings.autoEnrich,
     },
   }));
 
-  // Send in chunks to avoid hitting Inngest event payload limits on very
-  // large PDFs.
   const CHUNK = 100;
   for (let i = 0; i < events.length; i += CHUNK) {
     await inngest.send(events.slice(i, i + CHUNK));

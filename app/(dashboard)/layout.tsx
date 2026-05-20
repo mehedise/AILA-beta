@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
@@ -11,6 +12,35 @@ const NAV_ITEMS = [
   { href: "/imports", label: "Imports", icon: FileUp },
   { href: "/leads", label: "Leads", icon: Users },
 ];
+
+function MountedUserButton({ size }: { size: "sm" | "md" }) {
+  const [mounted, setMounted] = useState(false);
+  const className = size === "md" ? "h-8 w-8" : "h-7 w-7";
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <span
+        aria-hidden
+        className={cn(
+          "inline-block shrink-0 rounded-full bg-sidebar-accent",
+          className
+        )}
+      />
+    );
+  }
+
+  return (
+    <UserButton
+      appearance={{
+        elements: { userButtonAvatarBox: className },
+      }}
+    />
+  );
+}
 
 export default function DashboardLayout({
   children,
@@ -54,11 +84,7 @@ export default function DashboardLayout({
         </nav>
 
         <div className="mt-auto flex items-center justify-between border-t border-sidebar-border/60 pt-4">
-          <UserButton
-            appearance={{
-              elements: { userButtonAvatarBox: "h-8 w-8" },
-            }}
-          />
+          <MountedUserButton size="md" />
           <span className="text-[11px] text-sidebar-foreground/55">
             v0.1 · beta
           </span>
@@ -68,11 +94,20 @@ export default function DashboardLayout({
       <div className="flex flex-1 flex-col">
         <header className="flex items-center justify-between gap-3 border-b border-border/70 bg-background/70 px-4 py-3 backdrop-blur md:hidden">
           <BrandMark withWordmark size={32} />
-          <UserButton appearance={{ elements: { userButtonAvatarBox: "h-7 w-7" } }} />
+          <MountedUserButton size="sm" />
         </header>
 
         <main className={cn("flex-1 overflow-auto px-5 py-6 md:px-8 md:py-8")}>
-          <div className="mx-auto w-full max-w-7xl">{children}</div>
+          <div
+            key={pathname}
+            className={cn(
+              "mx-auto w-full max-w-7xl",
+              "duration-500 ease-out animate-in fade-in-0 slide-in-from-right-8",
+              "motion-reduce:animate-none"
+            )}
+          >
+            {children}
+          </div>
         </main>
       </div>
     </div>

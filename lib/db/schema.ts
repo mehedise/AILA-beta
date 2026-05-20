@@ -10,8 +10,38 @@ import {
 
 export const importStatusEnum = [
   "uploaded",
+  "uploading",
   "processing",
+  "counting_pages",
+  "preparing_pages",
+  "extracting",
   "ready_for_review",
+  "enriching",
+  "completed",
+  "failed",
+  "terminated",
+] as const;
+
+export const importProcessingModeEnum = ["standard", "large"] as const;
+
+export const importPageJobStatusEnum = [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+] as const;
+
+export const importBulkJobTypeEnum = [
+  "approve_pending",
+  "reject_pending",
+  "export_csv",
+  "delete_selected",
+  "enrich_pending",
+] as const;
+
+export const importBulkJobStatusEnum = [
+  "pending",
+  "running",
   "completed",
   "failed",
 ] as const;
@@ -37,10 +67,60 @@ export const imports = pgTable("imports", {
   status: text("status", { enum: importStatusEnum })
     .notNull()
     .default("uploaded"),
+  processingMode: text("processing_mode", { enum: importProcessingModeEnum })
+    .notNull()
+    .default("standard"),
+  fileSizeBytes: integer("file_size_bytes"),
   totalItems: integer("total_items").default(0).notNull(),
   processedItems: integer("processed_items").default(0).notNull(),
+  pagesPrepared: integer("pages_prepared").default(0).notNull(),
+  extractionFailures: integer("extraction_failures").default(0).notNull(),
+  importSettings: jsonb("import_settings"),
   error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const importPageJobs = pgTable("import_page_jobs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  importId: uuid("import_id")
+    .references(() => imports.id, { onDelete: "cascade" })
+    .notNull(),
+  startPage: integer("start_page").notNull(),
+  endPage: integer("end_page").notNull(),
+  status: text("status", { enum: importPageJobStatusEnum })
+    .notNull()
+    .default("pending"),
+  attempts: integer("attempts").default(0).notNull(),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const importBulkJobs = pgTable("import_bulk_jobs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  importId: uuid("import_id")
+    .references(() => imports.id, { onDelete: "cascade" })
+    .notNull(),
+  userId: text("user_id").notNull(),
+  jobType: text("job_type", { enum: importBulkJobTypeEnum }).notNull(),
+  status: text("status", { enum: importBulkJobStatusEnum })
+    .notNull()
+    .default("pending"),
+  params: jsonb("params"),
+  result: jsonb("result"),
+  processedCount: integer("processed_count").default(0).notNull(),
+  totalCount: integer("total_count").default(0).notNull(),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
 });
@@ -174,6 +254,8 @@ export const leads = pgTable("leads", {
 
 export type Import = typeof imports.$inferSelect;
 export type NewImport = typeof imports.$inferInsert;
+export type ImportPageJob = typeof importPageJobs.$inferSelect;
+export type ImportBulkJob = typeof importBulkJobs.$inferSelect;
 export type ExtractedLead = typeof extractedLeads.$inferSelect;
 export type NewExtractedLead = typeof extractedLeads.$inferInsert;
 export type Lead = typeof leads.$inferSelect;

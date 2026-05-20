@@ -1,29 +1,76 @@
 import { auth } from "@clerk/nextjs/server";
-import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import type { AnyColumn, SQL } from "drizzle-orm";
-import { db } from "@/lib/db/client";
-import { leads } from "@/lib/db/schema";
+import {
+  buildPageInfo,
+  parsePageParams,
+  parseSortParams,
+} from "@/lib/api/pagination";
+import {
+  countLeads,
+  listLeadIds,
+  listLeads,
+  type LeadListFilters,
+} from "@/lib/db/queries/leads";
 
-const TEXT_COLUMN_FILTERS = [
-  ["displayName", leads.displayName],
-  ["firstName", leads.firstName],
-  ["lastName", leads.lastName],
-  ["name", leads.name],
-  ["title", leads.title],
-  ["company", leads.company],
-  ["email", leads.email],
-  ["phone", leads.phone],
-  ["mobile", leads.mobile],
-  ["website", leads.website],
-  ["address", leads.address],
-  ["city", leads.city],
-  ["zipCode", leads.zipCode],
-  ["country", leads.country],
-  ["annualRevenue", leads.annualRevenue],
-  ["employeeHeadcount", leads.employeeHeadcount],
-  ["gicsSubIndustryDescription", leads.gicsSubIndustryDescription],
+const TEXT_COLUMN_KEYS = [
+  "displayName",
+  "firstName",
+  "lastName",
+  "name",
+  "title",
+  "company",
+  "email",
+  "phone",
+  "mobile",
+  "website",
+  "address",
+  "city",
+  "zipCode",
+  "country",
+  "annualRevenue",
+  "employeeHeadcount",
+  "gicsSubIndustryDescription",
 ] as const;
+
+const SORTABLE = [
+  "displayName",
+  "firstName",
+  "lastName",
+  "title",
+  "company",
+  "email",
+  "phone",
+  "mobile",
+  "website",
+  "address",
+  "city",
+  "zipCode",
+  "country",
+  "annualRevenue",
+  "employeeHeadcount",
+  "gicsSector",
+  "gicsIndustryGroup",
+  "gicsIndustry",
+  "gicsSubIndustry",
+  "gicsSubIndustryDescription",
+  "createdAt",
+] as const;
+
+function parseFilters(searchParams: URLSearchParams): LeadListFilters {
+  const columns: Record<string, string> = {};
+  for (const key of TEXT_COLUMN_KEYS) {
+    const v = searchParams.get(key)?.trim();
+    if (v) columns[key] = v;
+  }
+  return {
+    q: searchParams.get("q") ?? undefined,
+    sector: searchParams.get("sector") ?? undefined,
+    industryGroup: searchParams.get("industryGroup") ?? undefined,
+    industry: searchParams.get("industry") ?? undefined,
+    subIndustry: searchParams.get("subIndustry") ?? undefined,
+    columns: Object.keys(columns).length > 0 ? columns : undefined,
+  };
+}
 
 export async function GET(req: Request) {
   const { userId } = await auth();
@@ -32,58 +79,25 @@ export async function GET(req: Request) {
   }
 
   const { searchParams } = new URL(req.url);
-  const conditions: SQL[] = [eq(leads.userId, userId)];
+  const page = parsePageParams(searchParams);
+  const sort = parseSortParams(searchParams, SORTABLE, {
+    by: "createdAt",
+    dir: "desc",
+  });
+  const filters = parseFilters(searchParams);
 
-  const q = searchParams.get("q")?.trim();
-  if (q) {
-    const like = `%${q}%`;
-    conditions.push(
-      or(
-        ilike(leads.displayName, like),
-        ilike(leads.firstName, like),
-        ilike(leads.lastName, like),
-        ilike(leads.name, like),
-        ilike(leads.title, like),
-        ilike(leads.company, like),
-        ilike(leads.email, like),
-        ilike(leads.phone, like),
-        ilike(leads.mobile, like),
-        ilike(leads.website, like),
-        ilike(leads.address, like),
-        ilike(leads.city, like),
-        ilike(leads.zipCode, like),
-        ilike(leads.country, like),
-        ilike(leads.annualRevenue, like),
-        ilike(leads.employeeHeadcount, like),
-        ilike(leads.gicsSector, like),
-        ilike(leads.gicsIndustryGroup, like),
-        ilike(leads.gicsIndustry, like),
-        ilike(leads.gicsSubIndustry, like),
-        ilike(leads.gicsSubIndustryDescription, like)
-      )!
-    );
+  if (searchParams.get("idsOnly") === "true") {
+    const rows = await listLeadIds(userId, filters);
+    return NextResponse.json({ ids: rows.map((row) => row.id) });
   }
 
-  for (const [key, column] of TEXT_COLUMN_FILTERS) {
-    const value = searchParams.get(key)?.trim();
-    if (value) conditions.push(ilike(column, `%${value}%`));
-  }
+  const [totalCount, rows] = await Promise.all([
+    countLeads(userId, filters),
+    listLeads(userId, filters, page, sort),
+  ]);
 
-  const pushCode = (param: string, column: AnyColumn) => {
-    const value = searchParams.get(param)?.trim();
-    if (value && value !== "all") conditions.push(eq(column, value));
-  };
-
-  pushCode("sector", leads.gicsSectorCode);
-  pushCode("industryGroup", leads.gicsIndustryGroupCode);
-  pushCode("industry", leads.gicsIndustryCode);
-  pushCode("subIndustry", leads.gicsSubIndustryCode);
-
-  const rows = await db
-    .select()
-    .from(leads)
-    .where(and(...conditions))
-    .orderBy(desc(leads.createdAt));
-
-  return NextResponse.json({ leads: rows });
+  return NextResponse.json({
+    leads: rows,
+    pageInfo: buildPageInfo(totalCount, page),
+  });
 }

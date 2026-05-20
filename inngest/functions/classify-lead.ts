@@ -48,6 +48,7 @@ export const classifyLead = inngest.createFunction(
 
     const classifiable = joined.filter(
       ({ lead, importRow }) =>
+        importRow.status !== "terminated" &&
         !shouldSkipGicsClassification(lead, importRow.createdAt).skip
     );
 

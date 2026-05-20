@@ -25,6 +25,17 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfidenceBadge } from "@/components/confidence-badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  ANNUAL_REVENUE_OPTIONS,
+  HEADCOUNT_OPTIONS,
+} from "@/lib/leads/firmographic-options";
 import { cn } from "@/lib/utils";
 import type { ExtractedLead } from "@/lib/db/schema";
 
@@ -58,6 +69,8 @@ const EDITABLE_FIELDS = [
 ] as const;
 
 type EditableField = (typeof EDITABLE_FIELDS)[number];
+
+const EMPTY_SELECT_VALUE = "__empty";
 
 export function ExtractedLeadDetailDrawer({
   lead,
@@ -384,7 +397,12 @@ function CardImageSection({
 const FIELD_GROUPS: {
   title: string;
   icon: React.ReactNode;
-  fields: { key: EditableField; label: string; type?: string }[];
+  fields: {
+    key: EditableField;
+    label: string;
+    type?: string;
+    options?: readonly string[];
+  }[];
 }[] = [
   {
     title: "Contact",
@@ -405,8 +423,16 @@ const FIELD_GROUPS: {
     icon: <Building2 className="h-3.5 w-3.5" />,
     fields: [
       { key: "company", label: "Company" },
-      { key: "annualRevenue", label: "Annual revenue" },
-      { key: "employeeHeadcount", label: "Headcount" },
+      {
+        key: "annualRevenue",
+        label: "Annual revenue",
+        options: ANNUAL_REVENUE_OPTIONS,
+      },
+      {
+        key: "employeeHeadcount",
+        label: "Headcount",
+        options: HEADCOUNT_OPTIONS,
+      },
     ],
   },
   {
@@ -433,26 +459,72 @@ function EditForm({
       {FIELD_GROUPS.map((group) => (
         <Section key={group.title} title={group.title} icon={group.icon}>
           <div className="grid gap-3 sm:grid-cols-2">
-            {group.fields.map((f) => (
-              <div
-                key={f.key}
-                className="space-y-1.5 sm:[&:nth-child(1)]:col-span-2"
-              >
-                <Label
-                  htmlFor={`xleaddrawer-${f.key}`}
-                  className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
+            {group.fields.map((f) => {
+              const currentValue = draft[f.key];
+              const options =
+                f.options && currentValue && !f.options.includes(currentValue)
+                  ? [currentValue, ...f.options]
+                  : f.options;
+
+              return (
+                <div
+                  key={f.key}
+                  className="space-y-1.5 sm:[&:nth-child(1)]:col-span-2"
                 >
-                  {f.label}
-                </Label>
-                <Input
-                  id={`xleaddrawer-${f.key}`}
-                  type={f.type ?? "text"}
-                  value={draft[f.key]}
-                  onChange={(e) => onChange(f.key, e.target.value)}
-                  placeholder="—"
-                />
-              </div>
-            ))}
+                  <Label
+                    htmlFor={`xleaddrawer-${f.key}`}
+                    className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
+                  >
+                    {f.label}
+                  </Label>
+                  {options ? (
+                    <Select
+                      value={currentValue || EMPTY_SELECT_VALUE}
+                      onValueChange={(value) =>
+                        onChange(
+                          f.key,
+                          !value || value === EMPTY_SELECT_VALUE ? "" : value
+                        )
+                      }
+                    >
+                      <SelectTrigger
+                        id={`xleaddrawer-${f.key}`}
+                        className="w-full"
+                      >
+                        <SelectValue>
+                          {(value) =>
+                            !value || value === EMPTY_SELECT_VALUE
+                              ? "Select..."
+                              : value
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent
+                        alignItemWithTrigger={false}
+                        className="w-auto min-w-[var(--anchor-width)]"
+                      >
+                        <SelectItem value={EMPTY_SELECT_VALUE}>
+                          Not set
+                        </SelectItem>
+                        {options.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      id={`xleaddrawer-${f.key}`}
+                      type={f.type ?? "text"}
+                      value={currentValue}
+                      onChange={(e) => onChange(f.key, e.target.value)}
+                      placeholder="—"
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </Section>
       ))}

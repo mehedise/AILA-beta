@@ -27,6 +27,8 @@ cp .env.example .env.local
 
 npm install
 npm run db:push    # push schema to Neon
+# For large-import scalability columns, also run:
+# psql $DATABASE_URL -f drizzle/0001_large_imports.sql
 npm run dev        # http://localhost:3000
 ```
 
@@ -39,9 +41,11 @@ npx inngest-cli@latest dev
 Open the Inngest UI (usually http://localhost:8288) and confirm these functions appear:
 
 - `process-xlsx`
-- `process-pdf`
-- `extract-page`
+- `process-pdf` / `process-pdf-large`
+- `extract-page` / `extract-page-batch`
+- `enrich-lead`
 - `classify-lead`
+- `bulk-approve-import` / `bulk-export-import` / `bulk-enrich-import`
 
 ## Environment variables
 

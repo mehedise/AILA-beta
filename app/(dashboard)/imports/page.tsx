@@ -7,11 +7,11 @@ import {
   CheckCircle2,
   Clock,
   FileUp,
+  Sparkles,
   Trash2,
   XCircle,
 } from "lucide-react";
 import { UploadDropzone } from "@/components/upload-dropzone";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -25,18 +25,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { Import } from "@/lib/db/schema";
 
-function statusVariant(status: Import["status"]) {
-  switch (status) {
-    case "completed":
-      return "default";
-    case "failed":
-      return "destructive";
-    case "ready_for_review":
-      return "secondary";
-    default:
-      return "outline";
-  }
-}
+const LARGE_PRERENDER_BATCH_SIZE = 50;
 
 export default function ImportsPage() {
   const [imports, setImports] = useState<Import[]>([]);
@@ -311,7 +300,7 @@ export default function ImportsPage() {
               No imports yet. Upload a file above to get started.
             </p>
           ) : (
-            <Table>
+            <Table className="table-fixed">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
@@ -324,12 +313,11 @@ export default function ImportsPage() {
                       onCheckedChange={togglePage}
                     />
                   </TableHead>
-                  <TableHead>File</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Progress</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead />
+                  <TableHead className="w-[240px]">File</TableHead>
+                  <TableHead className="w-20">Type</TableHead>
+                  <TableHead className="w-56">Progress</TableHead>
+                  <TableHead className="w-44">Created</TableHead>
+                  <TableHead className="w-20" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -353,10 +341,10 @@ export default function ImportsPage() {
                           onCheckedChange={(c) => toggleOne(imp.id, c)}
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="whitespace-normal">
                         <Link
                           href={`/imports/${imp.id}`}
-                          className="font-medium text-foreground transition-colors hover:text-primary"
+                          className="block break-words font-medium leading-snug text-foreground transition-colors [overflow-wrap:anywhere] hover:text-primary"
                         >
                           {imp.fileName}
                         </Link>
@@ -365,20 +353,8 @@ export default function ImportsPage() {
                         {imp.sourceType}
                       </TableCell>
                       <TableCell>
-                        {imp.status === "failed" && imp.error ? (
-                          <Badge variant="destructive" title={imp.error}>
-                            Failed
-                          </Badge>
-                        ) : (
-                          <Badge variant={statusVariant(imp.status)}>
-                            {imp.status.replace(/_/g, " ")}
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
                         <ProgressCell
-                          processed={imp.processedItems}
-                          total={imp.totalItems}
+                          importRow={imp}
                         />
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
@@ -455,8 +431,12 @@ function StatCard({
   );
 }
 
-function ProgressCell({ processed, total }: { processed: number; total: number }) {
+function ProgressCell({ importRow }: { importRow: Import }) {
+  const processed = importRow.processedItems;
+  const total = importRow.totalItems;
   const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  const messages = getImportActivityMessages(importRow);
+
   return (
     <div className="min-w-[160px]">
       <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
@@ -475,6 +455,206 @@ function ProgressCell({ processed, total }: { processed: number; total: number }
           }}
         />
       </div>
+      {messages.length > 0 && <ImportActivityText messages={messages} />}
     </div>
+  );
+}
+
+function getImportActivityMessages(imp: Import): string[] {
+  if (imp.status === "failed") {
+    return ["Import failed — open to inspect the error."];
+  }
+
+  if (imp.status === "terminated") {
+    return ["Import terminated by user."];
+  }
+
+  if (imp.status === "ready_for_review" || imp.status === "completed") {
+    return ["Ready for review."];
+  }
+
+  const largePdfMessage = getLargePdfActivityMessage(imp);
+
+  if (imp.status === "counting_pages") {
+    return [
+      largePdfMessage,
+      "Reading PDF structure…",
+      "Counting pages…",
+      "Preparing large import plan…",
+    ].filter((message): message is string => Boolean(message));
+  }
+
+  if (imp.status === "preparing_pages") {
+    return [
+      largePdfMessage,
+      getLargePdfBatchMessage(imp),
+      "Preparing PDF pages…",
+      "Extracting page text…",
+      "Generating optimized card previews…",
+    ].filter((message): message is string => Boolean(message));
+  }
+
+  if (imp.status === "extracting") {
+    return [
+      largePdfMessage,
+      "Extracting leads in batches…",
+      "Saving extracted lead records…",
+      "Preparing leads for review…",
+    ].filter((message): message is string => Boolean(message));
+  }
+
+  if (imp.status === "enriching") {
+    return [
+      largePdfMessage,
+      "AILA is enriching lead details…",
+      "Classifying leads with GICS…",
+      "Checking missing company and contact data…",
+    ].filter((message): message is string => Boolean(message));
+  }
+
+  if (
+    imp.status !== "uploaded" &&
+    imp.status !== "uploading" &&
+    imp.status !== "processing"
+  ) {
+    return [];
+  }
+
+  if (imp.totalItems === 0) {
+    return imp.sourceType === "pdf"
+      ? [
+          largePdfMessage,
+          "Reading PDF structure…",
+          "Counting pages…",
+          "Preparing extraction plan…",
+        ].filter((message): message is string => Boolean(message))
+      : [
+          "Reading workbook sheets…",
+          "Detecting rows and columns…",
+          "Preparing spreadsheet data…",
+        ];
+  }
+
+  if (imp.processedItems === 0) {
+    return imp.sourceType === "pdf"
+      ? [
+          largePdfMessage,
+          "Extracting page text…",
+          "Generating card previews…",
+          "Preparing pages for extraction…",
+        ].filter((message): message is string => Boolean(message))
+      : [
+          "Normalizing rows…",
+          "Cleaning contact fields…",
+          "Preparing lead records…",
+        ];
+  }
+
+  if (imp.processedItems < imp.totalItems) {
+    return [
+      largePdfMessage,
+      "Saving extracted leads…",
+      "Preparing leads for review…",
+      "Finalizing extracted records…",
+    ].filter((message): message is string => Boolean(message));
+  }
+
+  return ["Preparing AI enrichment…"];
+}
+
+function getLargePdfActivityMessage(imp: Import): string | null {
+  if (imp.sourceType !== "pdf" || imp.processingMode !== "large") return null;
+  if (
+    imp.status !== "processing" &&
+    imp.status !== "counting_pages" &&
+    imp.status !== "preparing_pages" &&
+    imp.status !== "extracting" &&
+    imp.status !== "enriching"
+  ) {
+    return null;
+  }
+
+  return `Processing large PDF, this may take ${estimateLargePdfTime(imp)}.`;
+}
+
+function getLargePdfBatchMessage(imp: Import): string | null {
+  if (
+    imp.sourceType !== "pdf" ||
+    imp.processingMode !== "large" ||
+    imp.status !== "preparing_pages" ||
+    imp.totalItems <= 0
+  ) {
+    return null;
+  }
+
+  const totalBatches = Math.max(
+    1,
+    Math.ceil(imp.totalItems / LARGE_PRERENDER_BATCH_SIZE)
+  );
+  const completedBatches = Math.min(
+    totalBatches,
+    Math.floor((imp.pagesPrepared ?? 0) / LARGE_PRERENDER_BATCH_SIZE)
+  );
+  const runningBatch =
+    completedBatches < totalBatches ? completedBatches + 1 : totalBatches;
+
+  if (completedBatches >= totalBatches) {
+    return `Pre-render batches complete: ${completedBatches}/${totalBatches}.`;
+  }
+
+  return `Pre-render batches: ${completedBatches}/${totalBatches} complete, batch ${runningBatch} running.`;
+}
+
+function estimateLargePdfTime(imp: Import): string {
+  const totalPages = Math.max(0, imp.totalItems ?? 0);
+  if (totalPages === 0) return "a few minutes";
+
+  const prepared = Math.min(totalPages, Math.max(0, imp.pagesPrepared ?? 0));
+  const extracted = Math.min(totalPages, Math.max(0, imp.processedItems ?? 0));
+
+  const remainingPreparation = Math.max(0, totalPages - prepared);
+  const remainingExtraction = Math.max(0, totalPages - extracted);
+
+  const seconds =
+    imp.status === "preparing_pages"
+      ? remainingPreparation * 1.5 + remainingExtraction * 4
+      : imp.status === "extracting"
+        ? remainingExtraction * 4
+        : totalPages * 4;
+
+  return formatEstimatedDuration(seconds);
+}
+
+function formatEstimatedDuration(seconds: number): string {
+  const minutes = Math.max(2, Math.ceil(seconds / 60));
+  if (minutes < 60) return `about ${minutes} min`;
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (remainingMinutes < 10) return `about ${hours} hr`;
+  return `about ${hours} hr ${remainingMinutes} min`;
+}
+
+function ImportActivityText({ messages }: { messages: string[] }) {
+  const [index, setIndex] = useState(0);
+  const safeIndex = messages.length > 0 ? index % messages.length : 0;
+
+  useEffect(() => {
+    if (messages.length <= 1) return;
+
+    const interval = setInterval(() => {
+      setIndex((current) => (current + 1) % messages.length);
+    }, 2200);
+
+    return () => clearInterval(interval);
+  }, [messages]);
+
+  return (
+    <p className="mt-1 flex min-h-4 items-center gap-1.5 truncate text-[11px] text-muted-foreground">
+      <Sparkles className="h-3 w-3 shrink-0 text-emerald-700" aria-hidden />
+      <span key={messages[safeIndex]} className="truncate animate-pulse">
+        {messages[safeIndex]}
+      </span>
+    </p>
   );
 }

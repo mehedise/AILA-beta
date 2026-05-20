@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowDown,
@@ -16,6 +16,7 @@ import {
   Factory,
   Filter,
   Globe,
+  IdCard,
   Search,
   Sparkles,
   Tag,
@@ -27,7 +28,10 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LeadDetailDrawer } from "@/components/lead-detail-drawer";
+import {
+  LeadDetailDrawer,
+  type LeadWithSourceImport,
+} from "@/components/lead-detail-drawer";
 import {
   Select,
   SelectContent,
@@ -44,7 +48,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { GICS_ENTRIES, GICS_SECTORS } from "@/lib/taxonomy/gics";
+import {
+  LEAD_COLUMN_CELL,
+  LEAD_COLUMN_HEAD,
+  type LeadColumnKey,
+} from "@/lib/leads/column-widths";
+import {
+  ANNUAL_REVENUE_OPTIONS,
+  HEADCOUNT_OPTIONS,
+} from "@/lib/leads/firmographic-options";
 import { cn } from "@/lib/utils";
+import type { PageInfo } from "@/lib/api/pagination";
 import type { Lead } from "@/lib/db/schema";
 
 const COLUMN_FILTERS = [
@@ -63,7 +77,6 @@ const COLUMN_FILTERS = [
   { key: "country", label: "Country" },
   { key: "annualRevenue", label: "Annual revenue" },
   { key: "employeeHeadcount", label: "Employee headcount" },
-  { key: "gicsSubIndustryDescription", label: "Sub-industry description" },
 ] as const;
 
 type ColumnKey = (typeof COLUMN_FILTERS)[number]["key"];
@@ -71,9 +84,9 @@ type ColumnKey = (typeof COLUMN_FILTERS)[number]["key"];
 type SortDir = "asc" | "desc";
 
 type SortableColumn = {
-  key: string;
+  key: LeadColumnKey;
   label: string;
-  accessor: (lead: Lead) => string | number | null | undefined;
+  accessor: (lead: LeadWithSourceImport) => string | number | null | undefined;
 };
 
 const SORTABLE_COLUMNS: SortableColumn[] = [
@@ -149,23 +162,39 @@ const EMPTY_FILTERS: Filters = {
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200] as const;
 const DEFAULT_PAGE_SIZE = 25;
 
+function truncateImportName(name: string) {
+  return name.length > 30 ? `${name.slice(0, 30)}...` : name;
+}
+
 export default function LeadsPage() {
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [leads, setLeads] = useState<LeadWithSourceImport[]>([]);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [activeLead, setActiveLead] = useState<Lead | null>(null);
+  const [activeLead, setActiveLead] = useState<LeadWithSourceImport | null>(
+    null
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [pageInfo, setPageInfo] = useState<PageInfo | null>(null);
+  const [leadStats, setLeadStats] = useState<{
+    total: number;
+    industries: number;
+    subIndustries: number;
+    companies: number;
+    countries: number;
+    enrichedAndClassified: number;
+  } | null>(null);
+  const [countryOptions, setCountryOptions] = useState<string[]>([]);
 
-  const openLead = useCallback((lead: Lead) => {
+  const openLead = useCallback((lead: LeadWithSourceImport) => {
     setActiveLead(lead);
     setDrawerOpen(true);
   }, []);
 
-  const handleLeadUpdated = useCallback((updated: Lead) => {
+  const handleLeadUpdated = useCallback((updated: LeadWithSourceImport) => {
     setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
     setActiveLead(updated);
   }, []);
@@ -350,18 +379,60 @@ export default function LeadsPage() {
     setLoading(true);
     try {
       const params = buildParams(filters);
+      const offset = (page - 1) * pageSize;
+      params.set("limit", String(pageSize));
+      params.set("offset", String(offset));
+      if (sortBy) {
+        params.set("sortBy", sortBy);
+        params.set("sortDir", sortDir);
+      }
       const res = await fetch(`/api/leads?${params.toString()}`);
       const data = await res.json();
-      if (res.ok) setLeads(data.leads ?? []);
+      if (res.ok) {
+        setLeads(data.leads ?? []);
+        setPageInfo(data.pageInfo ?? null);
+      }
     } finally {
       setLoading(false);
     }
+  }, [buildParams, filters, page, pageSize, sortBy, sortDir]);
+
+  const fetchLeadStats = useCallback(async () => {
+    const params = buildParams(filters);
+    const res = await fetch(`/api/leads/stats?${params.toString()}`);
+    const data = await res.json();
+    if (res.ok) setLeadStats(data.stats ?? null);
   }, [buildParams, filters]);
 
   useEffect(() => {
-    const t = setTimeout(fetchLeads, 300);
+    const t = setTimeout(() => {
+      void fetchLeads();
+      void fetchLeadStats();
+    }, 300);
     return () => clearTimeout(t);
-  }, [fetchLeads]);
+  }, [fetchLeads, fetchLeadStats]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/leads/facets");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        if (Array.isArray(data.countries)) {
+          setCountryOptions(data.countries.filter((c: unknown): c is string =>
+            typeof c === "string" && c.trim().length > 0
+          ));
+        }
+      } catch {
+        // Facets are a UX nicety; failing silently keeps filters usable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const industryGroupOptions = useMemo(() => {
     const seen = new Map<string, string>();
@@ -503,39 +574,14 @@ export default function LeadsPage() {
     subIndustryOptions,
   ]);
 
-  const leadStats = useMemo(() => {
-    const total = leads.length;
-    const industries = new Set(
-      leads.map((l) => l.gicsIndustryCode).filter((c): c is string => !!c)
-    ).size;
-    const subIndustries = new Set(
-      leads.map((l) => l.gicsSubIndustryCode).filter((c): c is string => !!c)
-    ).size;
-    const companies = new Set(
-      leads
-        .map((l) => l.company?.trim().toLowerCase())
-        .filter((c): c is string => !!c)
-    ).size;
-    const countries = new Set(
-      leads
-        .map((l) => l.country?.trim().toLowerCase())
-        .filter((c): c is string => !!c)
-    ).size;
-    const enrichedAndClassified = leads.filter(
-      (l) =>
-        l.enrichmentStatus === "enriched" &&
-        (l.gicsSectorCode || l.gicsClassificationKey)
-    ).length;
-
-    return {
-      total,
-      industries,
-      subIndustries,
-      companies,
-      countries,
-      enrichedAndClassified,
-    };
-  }, [leads]);
+  const stats = leadStats ?? {
+    total: 0,
+    industries: 0,
+    subIndustries: 0,
+    companies: 0,
+    countries: 0,
+    enrichedAndClassified: 0,
+  };
 
   const hasActiveFilters = activePills.length > 0;
   const clearAll = () => setFilters(EMPTY_FILTERS);
@@ -544,61 +590,15 @@ export default function LeadsPage() {
     setPage(1);
   }, [filters, pageSize, sortBy, sortDir]);
 
-  const sortedLeads = useMemo(() => {
-    if (!sortBy) return leads;
-    const col = SORTABLE_COLUMNS.find((c) => c.key === sortBy);
-    if (!col) return leads;
-    const dirMul = sortDir === "asc" ? 1 : -1;
-    const norm = (v: string | number | null | undefined) => {
-      if (v === null || v === undefined) return null;
-      if (typeof v === "number") return v;
-      const s = String(v).trim();
-      return s ? s : null;
-    };
-    const copy = [...leads];
-    copy.sort((a, b) => {
-      const av = norm(col.accessor(a));
-      const bv = norm(col.accessor(b));
-      if (av === null && bv === null) return 0;
-      if (av === null) return 1;
-      if (bv === null) return -1;
-      if (typeof av === "number" && typeof bv === "number") {
-        return (av - bv) * dirMul;
-      }
-      return (
-        String(av).localeCompare(String(bv), undefined, {
-          numeric: true,
-          sensitivity: "base",
-        }) * dirMul
-      );
-    });
-    return copy;
-  }, [leads, sortBy, sortDir]);
-
-  const totalLeads = sortedLeads.length;
-  const totalPages = Math.max(1, Math.ceil(totalLeads / pageSize));
+  const totalLeads = pageInfo?.totalCount ?? leads.length;
+  const totalPages =
+    pageInfo?.totalPages ?? Math.max(1, Math.ceil(totalLeads / pageSize));
   const safePage = Math.min(page, totalPages);
   const startIndex = totalLeads === 0 ? 0 : (safePage - 1) * pageSize;
   const endIndex = Math.min(startIndex + pageSize, totalLeads);
-  const pagedLeads = useMemo(
-    () => sortedLeads.slice(startIndex, endIndex),
-    [sortedLeads, startIndex, endIndex]
-  );
+  const pagedLeads = leads;
   const canPrev = safePage > 1;
   const canNext = safePage < totalPages;
-
-  useEffect(() => {
-    if (selectedIds.size === 0) return;
-    const visibleIds = new Set(leads.map((l) => l.id));
-    let changed = false;
-    const next = new Set<string>();
-    for (const id of selectedIds) {
-      if (visibleIds.has(id)) next.add(id);
-      else changed = true;
-    }
-    if (changed) setSelectedIds(next);
-  }, [leads, selectedIds]);
-
   const allPageSelected =
     pagedLeads.length > 0 &&
     pagedLeads.every((l) => selectedIds.has(l.id));
@@ -619,13 +619,19 @@ export default function LeadsPage() {
     [pagedLeads]
   );
 
-  const selectAllFiltered = useCallback(() => {
-    setSelectedIds(new Set(leads.map((l) => l.id)));
-  }, [leads]);
+  const selectAllFiltered = useCallback(async () => {
+    const params = buildParams(filters);
+    params.set("idsOnly", "true");
+    const res = await fetch(`/api/leads?${params.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && Array.isArray(data.ids)) {
+      setSelectedIds(new Set(data.ids));
+    }
+  }, [buildParams, filters]);
 
   const selectionCount = selectedIds.size;
   const allFilteredSelected =
-    leads.length > 0 && selectionCount === leads.length;
+    totalLeads > 0 && selectionCount === totalLeads;
 
   return (
     <div className="space-y-6">
@@ -653,41 +659,41 @@ export default function LeadsPage() {
         <StatCard
           icon={<Users className="h-4 w-4" />}
           label="Total leads"
-          value={leadStats.total}
+          value={stats.total}
           tone="brand"
         />
         <StatCard
           icon={<Factory className="h-4 w-4" />}
           label="Industry"
-          value={leadStats.industries}
+          value={stats.industries}
           tone="muted"
         />
         <StatCard
           icon={<Tag className="h-4 w-4" />}
           label="Sub Industry"
-          value={leadStats.subIndustries}
+          value={stats.subIndustries}
           tone="muted"
         />
         <StatCard
           icon={<Building2 className="h-4 w-4" />}
           label="Companies"
-          value={leadStats.companies}
+          value={stats.companies}
           tone="brand"
         />
         <StatCard
           icon={<Globe className="h-4 w-4" />}
           label="Countries"
-          value={leadStats.countries}
+          value={stats.countries}
           tone="success"
         />
         <StatCard
           icon={<Sparkles className="h-4 w-4" />}
           label="AI Enriched & Classified"
-          value={leadStats.enrichedAndClassified}
+          value={stats.enrichedAndClassified}
           tone="success"
           detail={
-            leadStats.total > 0
-              ? `${Math.round((leadStats.enrichedAndClassified / leadStats.total) * 100)}% of view`
+            stats.total > 0
+              ? `${Math.round((stats.enrichedAndClassified / stats.total) * 100)}% of view`
               : undefined
           }
         />
@@ -847,31 +853,78 @@ export default function LeadsPage() {
                 variant="outline"
                 onClick={() => setShowAdvanced((v) => !v)}
                 aria-expanded={showAdvanced}
+                aria-controls="advanced-filters"
                 className="w-full"
               >
-                <Filter className="h-4 w-4" />
+                <Filter
+                  className={cn(
+                    "h-4 w-4 transition-transform duration-300 ease-out motion-reduce:transition-none",
+                    showAdvanced && "rotate-180"
+                  )}
+                />
                 {showAdvanced ? "Hide" : "More"}
               </Button>
             </FilterField>
           </div>
 
-          {showAdvanced && (
-            <div className="grid grid-cols-1 gap-3 rounded-md border border-border/70 bg-muted/30 p-4 sm:grid-cols-2 lg:grid-cols-4">
-              {COLUMN_FILTERS.map(({ key, label }) => (
-                <div key={key} className="space-y-1.5">
-                  <Label htmlFor={`filter-${key}`} className="text-xs">
-                    {label}
-                  </Label>
-                  <Input
-                    id={`filter-${key}`}
-                    value={filters.columns[key]}
-                    onChange={(e) => setColumn(key, e.target.value)}
-                    placeholder={`Filter ${label.toLowerCase()}…`}
-                  />
-                </div>
-              ))}
+          <div
+            id="advanced-filters"
+            aria-hidden={!showAdvanced}
+            className={cn(
+              "grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none",
+              showAdvanced
+                ? "grid-rows-[1fr] opacity-100"
+                : "grid-rows-[0fr] opacity-0"
+            )}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <div
+                className={cn(
+                  "grid grid-cols-1 gap-3 rounded-md border border-border/70 bg-muted/30 p-4 transition-transform duration-300 ease-out sm:grid-cols-2 lg:grid-cols-4 motion-reduce:transition-none",
+                  showAdvanced
+                    ? "translate-y-0"
+                    : "pointer-events-none -translate-y-1"
+                )}
+              >
+                {COLUMN_FILTERS.map(({ key, label }) => {
+                  const options =
+                    key === "annualRevenue"
+                      ? ANNUAL_REVENUE_OPTIONS
+                      : key === "employeeHeadcount"
+                        ? HEADCOUNT_OPTIONS
+                        : key === "country"
+                          ? countryOptions
+                          : null;
+
+                  return (
+                    <div key={key} className="space-y-1.5">
+                      <Label htmlFor={`filter-${key}`} className="text-xs">
+                        {label}
+                      </Label>
+                      {options ? (
+                        <ColumnFilterSelect
+                          id={`filter-${key}`}
+                          value={filters.columns[key]}
+                          options={options}
+                          placeholder={`Filter ${label.toLowerCase()}…`}
+                          onChange={(v) => setColumn(key, v)}
+                          disabled={!showAdvanced || options.length === 0}
+                        />
+                      ) : (
+                        <Input
+                          id={`filter-${key}`}
+                          value={filters.columns[key]}
+                          onChange={(e) => setColumn(key, e.target.value)}
+                          placeholder={`Filter ${label.toLowerCase()}…`}
+                          tabIndex={showAdvanced ? undefined : -1}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          )}
+          </div>
 
           {hasActiveFilters && (
             <div className="flex flex-wrap items-center gap-2">
@@ -883,6 +936,9 @@ export default function LeadsPage() {
                   className="inline-flex items-center gap-1.5 rounded-full border border-border/80 bg-card px-2.5 py-0.5 text-xs text-foreground transition-colors hover:border-destructive/40 hover:bg-destructive/5 hover:text-destructive"
                 >
                   {pill.label}
+                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+                    {loading ? "..." : totalLeads}
+                  </span>
                   <X className="h-3 w-3" />
                 </button>
               ))}
@@ -917,13 +973,13 @@ export default function LeadsPage() {
                   <Users className="h-3 w-3" />
                   {selectionCount} Selected
                 </span>
-                {!allFilteredSelected && leads.length > selectionCount && (
+                {!allFilteredSelected && totalLeads > selectionCount && (
                   <button
                     type="button"
-                    onClick={selectAllFiltered}
+                    onClick={() => void selectAllFiltered()}
                     className="text-xs font-medium text-foreground/80 underline-offset-2 hover:text-foreground hover:underline"
                   >
-                    Select all {leads.length} leads in view
+                    Select all {totalLeads} leads
                   </button>
                 )}
                 <button
@@ -1032,8 +1088,16 @@ export default function LeadsPage() {
                         onCheckedChange={togglePageSelection}
                       />
                     </TableHead>
+                    <TableHead className="w-[88px]">
+                      <span className="text-[13px] font-semibold uppercase tracking-[0.06em] text-foreground/80">
+                        Preview
+                      </span>
+                    </TableHead>
                     {SORTABLE_COLUMNS.map((col) => (
-                      <TableHead key={col.key}>
+                      <TableHead
+                        key={col.key}
+                        className={LEAD_COLUMN_HEAD[col.key]}
+                      >
                         <SortHeader
                           label={col.label}
                           active={sortBy === col.key}
@@ -1042,7 +1106,9 @@ export default function LeadsPage() {
                         />
                       </TableHead>
                     ))}
-                    <TableHead>Source</TableHead>
+                    <TableHead className={LEAD_COLUMN_HEAD.source}>
+                      Source
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1071,68 +1137,120 @@ export default function LeadsPage() {
                           onCheckedChange={(c) => toggleSelectOne(lead.id, c)}
                         />
                       </TableCell>
-                      <TableCell className="font-medium">
-                        {lead.displayName ?? lead.name ?? "—"}
+                      <TableCell className="w-[88px]">
+                        <LeadPreviewCell
+                          leadId={lead.id}
+                          enabled={!!lead.sourceExtractedLeadId}
+                        />
                       </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.firstName ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.lastName ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.title ?? "—"}
-                      </TableCell>
-                      <TableCell>{lead.company ?? "—"}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.email ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.phone ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.mobile ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.website ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.address ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.city ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.zipCode ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.country ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.annualRevenue ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {lead.employeeHeadcount ?? "—"}
-                      </TableCell>
-                      <TableCell>{lead.gicsSector ?? "—"}</TableCell>
-                      <TableCell>{lead.gicsIndustryGroup ?? "—"}</TableCell>
-                      <TableCell>{lead.gicsIndustry ?? "—"}</TableCell>
-                      <TableCell>{lead.gicsSubIndustry ?? "—"}</TableCell>
-                      <TableCell
-                        className="max-w-[260px] truncate text-muted-foreground"
-                        title={lead.gicsSubIndustryDescription ?? undefined}
-                      >
-                        {lead.gicsSubIndustryDescription ?? "—"}
-                      </TableCell>
+                      <LeadTextCell
+                        value={lead.displayName ?? lead.name}
+                        className={cn(
+                          LEAD_COLUMN_CELL.displayName,
+                          "font-medium text-foreground"
+                        )}
+                        emphasize
+                      />
+                      <LeadTextCell
+                        value={lead.firstName}
+                        className={LEAD_COLUMN_CELL.firstName}
+                      />
+                      <LeadTextCell
+                        value={lead.lastName}
+                        className={LEAD_COLUMN_CELL.lastName}
+                      />
+                      <LeadTextCell
+                        value={lead.title}
+                        className={LEAD_COLUMN_CELL.title}
+                      />
+                      <LeadTextCell
+                        value={lead.company}
+                        className={LEAD_COLUMN_CELL.company}
+                        emphasize
+                      />
+                      <LeadTextCell
+                        value={lead.email}
+                        className={LEAD_COLUMN_CELL.email}
+                      />
+                      <LeadTextCell
+                        value={lead.phone}
+                        className={LEAD_COLUMN_CELL.phone}
+                      />
+                      <LeadTextCell
+                        value={lead.mobile}
+                        className={LEAD_COLUMN_CELL.mobile}
+                      />
+                      <LeadTextCell
+                        value={lead.website}
+                        className={LEAD_COLUMN_CELL.website}
+                      />
+                      <LeadTextCell
+                        value={lead.address}
+                        className={LEAD_COLUMN_CELL.address}
+                      />
+                      <LeadTextCell
+                        value={lead.city}
+                        className={LEAD_COLUMN_CELL.city}
+                      />
+                      <LeadTextCell
+                        value={lead.zipCode}
+                        className={LEAD_COLUMN_CELL.zipCode}
+                      />
+                      <LeadTextCell
+                        value={lead.country}
+                        className={LEAD_COLUMN_CELL.country}
+                      />
+                      <LeadTextCell
+                        value={lead.annualRevenue}
+                        className={LEAD_COLUMN_CELL.annualRevenue}
+                      />
+                      <LeadTextCell
+                        value={lead.employeeHeadcount}
+                        className={LEAD_COLUMN_CELL.employeeHeadcount}
+                      />
+                      <LeadTextCell
+                        value={lead.gicsSector}
+                        className={LEAD_COLUMN_CELL.gicsSector}
+                        emphasize
+                      />
+                      <LeadTextCell
+                        value={lead.gicsIndustryGroup}
+                        className={LEAD_COLUMN_CELL.gicsIndustryGroup}
+                        emphasize
+                      />
+                      <LeadTextCell
+                        value={lead.gicsIndustry}
+                        className={LEAD_COLUMN_CELL.gicsIndustry}
+                        emphasize
+                      />
+                      <LeadTextCell
+                        value={lead.gicsSubIndustry}
+                        className={LEAD_COLUMN_CELL.gicsSubIndustry}
+                        emphasize
+                      />
+                      <LeadTextCell
+                        value={lead.gicsSubIndustryDescription}
+                        className={LEAD_COLUMN_CELL.gicsSubIndustryDescription}
+                      />
                       <TableCell onClick={(e) => e.stopPropagation()}>
-                        {lead.sourceExtractedLeadId ? (
-                          <Link
-                            href={`/imports`}
-                            className="text-sm text-primary hover:underline"
-                            title={lead.sourceExtractedLeadId}
-                          >
-                            View import
-                          </Link>
+                        {lead.sourceImportId ? (
+                          <div className={LEAD_COLUMN_CELL.source}>
+                            <Link
+                              href={`/imports/${lead.sourceImportId}`}
+                              className="block truncate text-sm text-primary hover:underline"
+                              title={lead.sourceExtractedLeadId ?? undefined}
+                            >
+                              View import
+                            </Link>
+                            {lead.sourceImportName && (
+                              <div
+                                className="truncate text-xs text-muted-foreground"
+                                title={lead.sourceImportName}
+                              >
+                                {truncateImportName(lead.sourceImportName)}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           "—"
                         )}
@@ -1238,6 +1356,84 @@ export default function LeadsPage() {
   );
 }
 
+const FILTER_ANY_VALUE = "__any";
+
+function ColumnFilterSelect({
+  id,
+  value,
+  options,
+  placeholder,
+  onChange,
+  disabled,
+}: {
+  id: string;
+  value: string;
+  options: readonly string[];
+  placeholder: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const normalized = value?.trim() ?? "";
+  const selectValue = normalized === "" ? FILTER_ANY_VALUE : normalized;
+  const showCurrent = normalized !== "" && !options.includes(normalized);
+  const effectiveOptions = showCurrent ? [normalized, ...options] : options;
+
+  return (
+    <Select
+      value={selectValue}
+      onValueChange={(v) =>
+        onChange(!v || v === FILTER_ANY_VALUE ? "" : v)
+      }
+      disabled={disabled}
+    >
+      <SelectTrigger id={id} className="w-full">
+        <SelectValue>
+          {(v) =>
+            !v || v === FILTER_ANY_VALUE ? (
+              <span className="text-muted-foreground">{placeholder}</span>
+            ) : (
+              v
+            )
+          }
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent
+        alignItemWithTrigger={false}
+        className="w-auto min-w-[var(--anchor-width)] max-w-[360px]"
+      >
+        <SelectItem value={FILTER_ANY_VALUE}>Any</SelectItem>
+        {effectiveOptions.map((option) => (
+          <SelectItem key={option} value={option}>
+            {option}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function LeadTextCell({
+  value,
+  className,
+  emphasize,
+}: {
+  value: string | null | undefined;
+  className: string;
+  emphasize?: boolean;
+}) {
+  const display = value?.trim();
+  return (
+    <TableCell className={emphasize ? undefined : "text-muted-foreground"}>
+      <div
+        className={cn("block truncate", className)}
+        title={display || undefined}
+      >
+        {display || "—"}
+      </div>
+    </TableCell>
+  );
+}
+
 function SortHeader({
   label,
   active,
@@ -1284,6 +1480,56 @@ function SortHeader({
 
 type StatTone = "brand" | "success" | "muted" | "danger";
 
+/**
+ * Animate a number from the previously-displayed value up to `target` using
+ * requestAnimationFrame with an easeOutCubic curve. On first render the
+ * displayed value starts at 0, producing the count-up effect on initial
+ * load. Subsequent target changes smoothly tween from the current display
+ * to the new target. Respects `prefers-reduced-motion`.
+ */
+function useCountUp(target: number, duration = 900) {
+  const [display, setDisplay] = useState(0);
+  const displayRef = useRef(0);
+  const reducedMotionRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    reducedMotionRef.current = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+  }, []);
+
+  useEffect(() => {
+    const safeTarget = Number.isFinite(target) ? target : 0;
+    if (reducedMotionRef.current) {
+      displayRef.current = safeTarget;
+      setDisplay(safeTarget);
+      return;
+    }
+    const from = displayRef.current;
+    if (from === safeTarget) return;
+
+    let startTime: number | null = null;
+    let raf = 0;
+    const step = (ts: number) => {
+      if (startTime == null) startTime = ts;
+      const elapsed = ts - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const next = Math.round(from + (safeTarget - from) * eased);
+      displayRef.current = next;
+      setDisplay(next);
+      if (progress < 1) {
+        raf = requestAnimationFrame(step);
+      }
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+
+  return display;
+}
+
 function StatCard({
   icon,
   label,
@@ -1316,6 +1562,7 @@ function StatCard({
     },
   };
   const t = toneStyles[tone];
+  const animated = useCountUp(value);
 
   return (
     <div className="app-stat flex items-center gap-3">
@@ -1329,7 +1576,9 @@ function StatCard({
         <div className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
           {label}
         </div>
-        <div className="text-xl font-semibold tabular-nums">{value}</div>
+        <div className="text-xl font-semibold tabular-nums">
+          {animated.toLocaleString()}
+        </div>
         {detail ? (
           <p className="mt-0.5 text-[11px] text-muted-foreground">{detail}</p>
         ) : null}
@@ -1362,6 +1611,107 @@ function FilterField({
         <span aria-hidden className="block h-[14px]" />
       )}
       {children}
+    </div>
+  );
+}
+
+type PreviewState =
+  | { kind: "loading" }
+  | { kind: "ready"; url: string }
+  | { kind: "none" }
+  | { kind: "error" };
+
+// Module-scoped cache shared across rows so paginating/re-rendering doesn't
+// refetch URLs we've already loaded this session. Signed URLs are valid for
+// ~24h which is well beyond a typical browsing session.
+const previewCache = new Map<string, PreviewState>();
+const previewInflight = new Map<string, Promise<PreviewState>>();
+
+async function loadPreview(leadId: string): Promise<PreviewState> {
+  const cached = previewCache.get(leadId);
+  if (cached && cached.kind !== "loading") return cached;
+
+  const existing = previewInflight.get(leadId);
+  if (existing) return existing;
+
+  const promise = (async (): Promise<PreviewState> => {
+    try {
+      const res = await fetch(`/api/leads/${leadId}/card-image`);
+      if (!res.ok) return { kind: "error" };
+      const data = (await res.json()) as { url: string | null };
+      if (!data.url) return { kind: "none" };
+      return { kind: "ready", url: data.url };
+    } catch {
+      return { kind: "error" };
+    }
+  })();
+
+  previewInflight.set(leadId, promise);
+  const result = await promise;
+  previewCache.set(leadId, result);
+  previewInflight.delete(leadId);
+  return result;
+}
+
+function LeadPreviewCell({
+  leadId,
+  enabled,
+}: {
+  leadId: string;
+  enabled: boolean;
+}) {
+  const [state, setState] = useState<PreviewState>(
+    () => previewCache.get(leadId) ?? { kind: "loading" }
+  );
+
+  useEffect(() => {
+    if (!enabled) {
+      setState({ kind: "none" });
+      return;
+    }
+    const cached = previewCache.get(leadId);
+    if (cached && cached.kind !== "loading") {
+      setState(cached);
+      return;
+    }
+    let cancelled = false;
+    setState({ kind: "loading" });
+    loadPreview(leadId).then((next) => {
+      if (!cancelled) setState(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [leadId, enabled]);
+
+  if (state.kind === "loading") {
+    return (
+      <div className="h-10 w-16 animate-pulse rounded-md bg-muted" aria-hidden />
+    );
+  }
+
+  if (state.kind === "ready") {
+    return (
+      <div className="h-10 w-16 overflow-hidden rounded-md border border-border/70 bg-white">
+        {/* Native <img>: signed URL hosts aren't whitelisted in next.config. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={state.url}
+          alt=""
+          loading="lazy"
+          className="h-full w-full object-cover"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex h-10 w-16 items-center justify-center rounded-md border border-dashed border-border/70 bg-muted/40 text-muted-foreground"
+      aria-hidden
+      title="No business card image"
+    >
+      <IdCard className="h-4 w-4 opacity-50" />
     </div>
   );
 }

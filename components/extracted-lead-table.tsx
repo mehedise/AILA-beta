@@ -36,15 +36,56 @@ import {
 import { cn } from "@/lib/utils";
 import { ConfidenceBadge } from "@/components/confidence-badge";
 import { ExtractedLeadDetailDrawer } from "@/components/extracted-lead-detail-drawer";
+import {
+  LEAD_COLUMN_CELL,
+  LEAD_COLUMN_HEAD,
+} from "@/lib/leads/column-widths";
 import type { ExtractedLead } from "@/lib/db/schema";
 
+function TruncCell({
+  value,
+  className,
+  emphasize,
+}: {
+  value: string | null | undefined;
+  className: string;
+  emphasize?: boolean;
+}) {
+  const display = value?.trim();
+  return (
+    <TableCell className={emphasize ? undefined : "text-muted-foreground"}>
+      <div
+        className={cn("block truncate", className)}
+        title={display || undefined}
+      >
+        {display || "—"}
+      </div>
+    </TableCell>
+  );
+}
+
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200] as const;
-const DEFAULT_PAGE_SIZE = 25;
+const DEFAULT_PAGE_SIZE = 10;
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
+
+export type ExtractedLeadServerPagination = {
+  totalCount: number;
+  offset: number;
+  limit: number;
+  loading?: boolean;
+  lowConfidenceCount: number;
+  rejectedCount: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
+  onLowConfidenceOnlyChange: (value: boolean) => void;
+  onRejectedOnlyChange: (value: boolean) => void;
+};
 
 type Props = {
   leads: ExtractedLead[];
   importId: string;
+  /** When set, pagination/filter counts come from the server (large imports). */
+  serverPagination?: ExtractedLeadServerPagination;
   /**
    * True while the import is still saving rows to the database or while any
    * lead is still being AI-enriched. While this is true the rows are blurred
@@ -56,26 +97,11 @@ type Props = {
   onLeadsChanged?: () => void;
 };
 
-function cell(value: string | null | undefined) {
-  return value?.trim() || "—";
-}
-
 function getConfidence(lead: ExtractedLead): number {
   const value = lead.confidence;
   if (value === null || value === undefined) return 0;
   const parsed = typeof value === "string" ? parseFloat(value) : value;
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function AIWorkingPill() {
-  return (
-    <span className="ai-pill" aria-label="AI enrichment in progress">
-      <Sparkles className="ai-pulse-icon h-3 w-3" />
-      <span>
-        AI Enriching<span className="ai-dots" aria-hidden />
-      </span>
-    </span>
-  );
 }
 
 const CSV_HEADERS = [
@@ -114,18 +140,30 @@ function escapeCsv(v: unknown) {
 export function ExtractedLeadTable({
   leads,
   importId,
+  serverPagination,
   isProcessing = false,
   onLeadsChanged,
 }: Props) {
+  const remote = !!serverPagination;
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [lowConfidenceOnly, setLowConfidenceOnly] = useState(false);
+  const [rejectedOnly, setRejectedOnly] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkApproving, setBulkApproving] = useState(false);
   const [bulkRejecting, setBulkRejecting] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{
+    action: "approve" | "reject";
+    done: number;
+    total: number;
+  } | null>(null);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
   const [activeLead, setActiveLead] = useState<ExtractedLead | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const onServerPageChange = serverPagination?.onPageChange;
+  const onServerLowConfidenceOnlyChange =
+    serverPagination?.onLowConfidenceOnlyChange;
+  const onServerRejectedOnlyChange = serverPagination?.onRejectedOnlyChange;
 
   // Snap back to page 1 when page size changes. Don't reset on `leads`
   // changes — the import detail page polls every 3s while extraction is
@@ -136,9 +174,29 @@ export function ExtractedLeadTable({
 
   // Filter changes should feel like a fresh view, not carry hidden selections.
   useEffect(() => {
-    setPage(1);
+    if (remote) {
+      onServerLowConfidenceOnlyChange?.(lowConfidenceOnly);
+      onServerPageChange?.(1);
+    } else {
+      setPage(1);
+    }
     setSelectedIds(new Set());
-  }, [lowConfidenceOnly]);
+  }, [
+    lowConfidenceOnly,
+    remote,
+    onServerLowConfidenceOnlyChange,
+    onServerPageChange,
+  ]);
+
+  useEffect(() => {
+    if (remote) {
+      onServerRejectedOnlyChange?.(rejectedOnly);
+      onServerPageChange?.(1);
+    } else {
+      setPage(1);
+    }
+    setSelectedIds(new Set());
+  }, [rejectedOnly, remote, onServerRejectedOnlyChange, onServerPageChange]);
 
   // Auto-dismiss bulk-action toast.
   useEffect(() => {
@@ -148,7 +206,10 @@ export function ExtractedLeadTable({
   }, [bulkMessage]);
 
   // Prune selection of IDs that have disappeared (e.g. import deleted).
+  // In server-paginated mode the current `leads` array is only one page, so
+  // pruning here would immediately undo "select all" across pages.
   useEffect(() => {
+    if (remote) return;
     if (selectedIds.size === 0) return;
     const visible = new Set(leads.map((l) => l.id));
     let changed = false;
@@ -158,7 +219,7 @@ export function ExtractedLeadTable({
       else changed = true;
     }
     if (changed) setSelectedIds(next);
-  }, [leads, selectedIds]);
+  }, [leads, remote, selectedIds]);
 
   // Keep the drawer's lead in sync with refetched data. While the import
   // detail page polls every 3s, the parent passes us a fresh `leads` array;
@@ -194,30 +255,77 @@ export function ExtractedLeadTable({
     [onLeadsChanged]
   );
 
-  const lowConfidenceLeads = useMemo(
-    () =>
-      leads.filter(
-        (lead) => getConfidence(lead) < LOW_CONFIDENCE_THRESHOLD
-      ),
-    [leads]
-  );
-  const visibleLeads = lowConfidenceOnly ? lowConfidenceLeads : leads;
-  const totalExtractedLeads = leads.length;
-  const totalLeads = visibleLeads.length;
-  const totalPages = Math.max(1, Math.ceil(totalLeads / pageSize));
-  const safePage = Math.min(page, totalPages);
-  const startIndex = totalLeads === 0 ? 0 : (safePage - 1) * pageSize;
-  const endIndex = Math.min(startIndex + pageSize, totalLeads);
+  const lowConfidenceCount = remote
+    ? (serverPagination?.lowConfidenceCount ?? 0)
+    : leads.filter(
+        (lead) =>
+          lead.reviewStatus !== "rejected" &&
+          getConfidence(lead) < LOW_CONFIDENCE_THRESHOLD
+      ).length;
+  const rejectedCount = remote
+    ? (serverPagination?.rejectedCount ?? 0)
+    : leads.filter((lead) => lead.reviewStatus === "rejected").length;
+
+  const totalExtractedLeads = remote
+    ? (serverPagination?.totalCount ?? 0)
+    : leads.length;
+  const totalLeads = remote
+    ? totalExtractedLeads
+    : rejectedOnly
+      ? leads.filter((l) => l.reviewStatus === "rejected").length
+      : lowConfidenceOnly
+        ? leads.filter(
+            (l) =>
+              l.reviewStatus !== "rejected" &&
+              getConfidence(l) < LOW_CONFIDENCE_THRESHOLD
+          ).length
+        : leads.filter((l) => l.reviewStatus !== "rejected").length;
+
+  const activePageSize = remote
+    ? (serverPagination?.limit ?? pageSize)
+    : pageSize;
+  const activePage = remote
+    ? Math.floor((serverPagination?.offset ?? 0) / activePageSize) + 1
+    : page;
+
+  const totalPages = Math.max(1, Math.ceil(totalLeads / activePageSize));
+  const safePage = Math.min(activePage, totalPages);
+  const startIndex = totalLeads === 0 ? 0 : (safePage - 1) * activePageSize;
+  const endIndex = Math.min(startIndex + activePageSize, totalLeads);
   const canPrev = safePage > 1;
   const canNext = safePage < totalPages;
 
   const pagedLeads = useMemo(
-    () => visibleLeads.slice(startIndex, endIndex),
-    [visibleLeads, startIndex, endIndex]
+    () => {
+      if (remote) return leads;
+      const filtered = rejectedOnly
+        ? leads.filter((lead) => lead.reviewStatus === "rejected")
+        : lowConfidenceOnly
+          ? leads.filter(
+              (lead) =>
+                lead.reviewStatus !== "rejected" &&
+                getConfidence(lead) < LOW_CONFIDENCE_THRESHOLD
+            )
+          : leads.filter((lead) => lead.reviewStatus !== "rejected");
+      return filtered.slice(startIndex, endIndex);
+    },
+    [remote, leads, rejectedOnly, lowConfidenceOnly, startIndex, endIndex]
   );
 
-  const enrichmentActive = leads.some(
-    (lead) => lead.enrichmentStatus === "pending"
+  const setPageSafe = useCallback(
+    (next: number) => {
+      if (remote) serverPagination?.onPageChange(next);
+      else setPage(next);
+    },
+    [remote, serverPagination]
+  );
+
+  const setPageSizeSafe = useCallback(
+    (size: number) => {
+      if (remote) serverPagination?.onPageSizeChange(size);
+      else setPageSize(size);
+    },
+    [remote, serverPagination]
   );
 
   const toggleSelectOne = useCallback((id: string, checked: boolean) => {
@@ -233,7 +341,9 @@ export function ExtractedLeadTable({
     (checked: boolean) => {
       setSelectedIds((prev) => {
         const next = new Set(prev);
-        for (const lead of pagedLeads) {
+        for (const lead of pagedLeads.filter(
+          (lead) => lead.reviewStatus !== "rejected"
+        )) {
           if (checked) next.add(lead.id);
           else next.delete(lead.id);
         }
@@ -243,20 +353,56 @@ export function ExtractedLeadTable({
     [pagedLeads]
   );
 
-  const selectAll = useCallback(() => {
-    setSelectedIds(new Set(visibleLeads.map((l) => l.id)));
-  }, [visibleLeads]);
+  const selectAll = useCallback(async () => {
+    if (remote) {
+      const params = new URLSearchParams({ idsOnly: "true" });
+      if (rejectedOnly) {
+        params.set("reviewStatus", "rejected");
+      } else {
+        params.set("excludeRejected", "true");
+        if (lowConfidenceOnly) params.set("lowConfidenceOnly", "true");
+      }
+      const res = await fetch(`/api/imports/${importId}/leads?${params}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(data.ids)) {
+        setSelectedIds(new Set(data.ids));
+      }
+      return;
+    }
+
+    const selectableLeads = leads.filter((lead) =>
+      rejectedOnly
+        ? lead.reviewStatus === "rejected"
+        : lead.reviewStatus !== "rejected"
+    );
+    setSelectedIds(new Set(selectableLeads.map((l) => l.id)));
+  }, [importId, leads, lowConfidenceOnly, rejectedOnly, remote]);
 
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
   }, []);
 
+  const selectablePageLeads = pagedLeads.filter(
+    (lead) => lead.reviewStatus !== "rejected"
+  );
   const allPageSelected =
-    pagedLeads.length > 0 && pagedLeads.every((l) => selectedIds.has(l.id));
+    selectablePageLeads.length > 0 &&
+    selectablePageLeads.every((l) => selectedIds.has(l.id));
   const somePageSelected =
-    pagedLeads.some((l) => selectedIds.has(l.id)) && !allPageSelected;
+    selectablePageLeads.some((l) => selectedIds.has(l.id)) && !allPageSelected;
   const selectionCount = selectedIds.size;
-  const allSelected = totalLeads > 0 && selectionCount === totalLeads;
+  const selectableTotal = remote
+    ? totalLeads
+    : leads.filter((lead) => lead.reviewStatus !== "rejected").length;
+  const allSelected =
+    selectableTotal > 0 && selectionCount >= selectableTotal;
+  const bulkProgressPct =
+    bulkProgress && bulkProgress.total > 0
+      ? Math.min(
+          100,
+          Math.round((bulkProgress.done / bulkProgress.total) * 100)
+        )
+      : 0;
 
   const exportSelectedCsv = useCallback(() => {
     const rows = leads.filter((l) => selectedIds.has(l.id));
@@ -290,6 +436,7 @@ export function ExtractedLeadTable({
       if (ids.length === 0) return;
       if (action === "approve") setBulkApproving(true);
       else setBulkRejecting(true);
+      setBulkProgress({ action, done: 0, total: ids.length });
       setBulkMessage(null);
       try {
         const results = await Promise.all(
@@ -306,6 +453,15 @@ export function ExtractedLeadTable({
               return res.ok;
             } catch {
               return false;
+            } finally {
+              setBulkProgress((current) =>
+                current?.action === action
+                  ? {
+                      ...current,
+                      done: Math.min(current.done + 1, current.total),
+                    }
+                  : current
+              );
             }
           })
         );
@@ -323,15 +479,24 @@ export function ExtractedLeadTable({
       } finally {
         if (action === "approve") setBulkApproving(false);
         else setBulkRejecting(false);
+        setBulkProgress(null);
       }
     },
     [selectedIds, onLeadsChanged]
   );
 
-  if (totalExtractedLeads === 0) {
+  if (!remote && totalExtractedLeads === 0) {
     return (
       <p className="px-6 py-10 text-center text-sm text-muted-foreground">
         No extracted leads yet. Processing may still be in progress.
+      </p>
+    );
+  }
+
+  if (serverPagination?.loading && leads.length === 0) {
+    return (
+      <p className="px-6 py-10 text-center text-sm text-muted-foreground">
+        Loading leads…
       </p>
     );
   }
@@ -366,13 +531,13 @@ export function ExtractedLeadTable({
                 <Users className="h-3 w-3" />
                 {selectionCount} Selected
               </span>
-              {!allSelected && totalLeads > selectionCount && (
+              {!allSelected && selectableTotal > selectionCount && (
                 <button
                   type="button"
-                  onClick={selectAll}
+                  onClick={() => void selectAll()}
                   className="text-xs font-medium text-foreground/80 underline-offset-2 hover:text-foreground hover:underline"
                 >
-                  Select all {totalLeads} extracted leads
+                  Select all {selectableTotal} leads
                 </button>
               )}
               <button
@@ -390,26 +555,61 @@ export function ExtractedLeadTable({
             </span>
           )}
           {!isProcessing && (
-            <button
-              type="button"
-              onClick={() => setLowConfidenceOnly((value) => !value)}
-              disabled={lowConfidenceLeads.length === 0}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-                lowConfidenceOnly
-                  ? "border-warning/50 bg-warning/15 text-foreground"
-                  : "border-border/70 bg-background text-muted-foreground hover:border-warning/50 hover:text-foreground",
-                lowConfidenceLeads.length === 0 &&
-                  "cursor-not-allowed opacity-50 hover:border-border/70 hover:text-muted-foreground"
-              )}
-              title="Show only extracted leads below 60% confidence"
-            >
-              <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-              Needs review
-              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
-                {lowConfidenceLeads.length}
-              </span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setRejectedOnly(false);
+                  setLowConfidenceOnly((value) => !value);
+                }}
+                disabled={lowConfidenceCount === 0}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                  lowConfidenceOnly && !rejectedOnly
+                    ? "border-[var(--brand-marigold)] bg-[var(--brand-marigold)] text-foreground"
+                    : "border-border/70 bg-background text-muted-foreground hover:border-warning/50 hover:text-foreground",
+                  lowConfidenceCount === 0 &&
+                    "cursor-not-allowed opacity-50 hover:border-border/70 hover:text-muted-foreground"
+                )}
+                title="Show only extracted leads below 60% confidence"
+              >
+                <AlertTriangle
+                  className={cn(
+                    "h-3.5 w-3.5",
+                    lowConfidenceOnly && !rejectedOnly
+                      ? "text-white"
+                      : "text-warning"
+                  )}
+                />
+                Needs review
+                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+                  {lowConfidenceCount}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLowConfidenceOnly(false);
+                  setRejectedOnly((value) => !value);
+                }}
+                disabled={rejectedCount === 0}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                  rejectedOnly
+                    ? "border-destructive/50 bg-destructive/10 text-foreground"
+                    : "border-border/70 bg-background text-muted-foreground hover:border-destructive/50 hover:text-foreground",
+                  rejectedCount === 0 &&
+                    "cursor-not-allowed opacity-50 hover:border-border/70 hover:text-muted-foreground"
+                )}
+                title="Show rejected extracted leads"
+              >
+                <X className="h-3.5 w-3.5 text-destructive" />
+                Rejected
+                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+                  {rejectedCount}
+                </span>
+              </button>
+            </>
           )}
         </div>
 
@@ -447,6 +647,31 @@ export function ExtractedLeadTable({
         </div>
       </div>
 
+      {bulkProgress && (
+        <div className="border-b border-border/70 bg-muted/30 px-6 py-3">
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>
+              {bulkProgress.action === "approve"
+                ? "Bulk approving leads"
+                : "Bulk rejecting leads"}
+            </span>
+            <span className="tabular-nums">
+              {bulkProgressPct}% · {bulkProgress.done} / {bulkProgress.total}
+            </span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full transition-[width] duration-300"
+              style={{
+                width: `${bulkProgressPct}%`,
+                background:
+                  "linear-gradient(90deg, var(--brand-green), var(--brand-marigold))",
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {bulkMessage && (
         <div className="border-b border-border/70 bg-muted/40 px-6 py-2 text-xs text-muted-foreground">
           {bulkMessage}
@@ -454,9 +679,7 @@ export function ExtractedLeadTable({
       )}
 
       <div className="relative overflow-x-auto">
-        {(isProcessing || enrichmentActive) && (
-          <div className="ai-scan-beam" aria-hidden />
-        )}
+        {isProcessing && <div className="ai-scan-beam" aria-hidden />}
         <Table>
           <TableHeader>
             <TableRow>
@@ -472,47 +695,72 @@ export function ExtractedLeadTable({
                 />
               </TableHead>
               <TableHead className="w-16">Preview</TableHead>
-              <TableHead>Display Name</TableHead>
-              <TableHead>First Name</TableHead>
-              <TableHead>Last Name</TableHead>
-              <TableHead>Position</TableHead>
-              <TableHead>Company</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Office Tel</TableHead>
-              <TableHead>Mobile</TableHead>
-              <TableHead>Website</TableHead>
-              <TableHead>Address</TableHead>
-              <TableHead>City</TableHead>
-              <TableHead>Zip</TableHead>
-              <TableHead>Country</TableHead>
-              <TableHead>Annual Revenue</TableHead>
-              <TableHead>Headcount</TableHead>
-              <TableHead>Sector</TableHead>
-              <TableHead>Industry Group</TableHead>
-              <TableHead>Industry</TableHead>
-              <TableHead>Sub-Industry</TableHead>
-              <TableHead>Sub-Industry Description</TableHead>
-              <TableHead>Enrichment</TableHead>
-              <TableHead>Confidence</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead />
+              <TableHead className={LEAD_COLUMN_HEAD.displayName}>
+                Display Name
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.firstName}>
+                First Name
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.lastName}>
+                Last Name
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.title}>Position</TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.company}>Company</TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.email}>Email</TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.phone}>
+                Office Tel
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.mobile}>Mobile</TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.website}>Website</TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.address}>Address</TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.city}>City</TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.zipCode}>Zip</TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.country}>Country</TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.annualRevenue}>
+                Annual Revenue
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.employeeHeadcount}>
+                Headcount
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.gicsSector}>
+                Sector
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.gicsIndustryGroup}>
+                Industry Group
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.gicsIndustry}>
+                Industry
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.gicsSubIndustry}>
+                Sub-Industry
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.gicsSubIndustryDescription}>
+                Sub-Industry Description
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.confidence}>
+                Confidence
+              </TableHead>
+              <TableHead className={LEAD_COLUMN_HEAD.status}>Status</TableHead>
+              <TableHead className="w-[88px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {pagedLeads.length === 0 && (
               <TableRow className="hover:bg-transparent">
                 <TableCell
-                  colSpan={26}
+                  colSpan={25}
                   className="px-6 py-12 text-center text-sm text-muted-foreground"
                 >
-                  No low-confidence leads need review right now.
+                  {rejectedOnly
+                    ? "No rejected leads right now."
+                    : lowConfidenceOnly
+                      ? "No low-confidence leads need review right now."
+                      : "No extracted leads to show right now."}
                 </TableCell>
               </TableRow>
             )}
             {pagedLeads.map((lead) => {
-              const isEnriching = lead.enrichmentStatus === "pending";
               const isSelected = selectedIds.has(lead.id);
-              const rowLoading = isProcessing || isEnriching;
               return (
                 <TableRow
                   key={lead.id}
@@ -520,10 +768,10 @@ export function ExtractedLeadTable({
                   onClick={
                     isProcessing ? undefined : () => openLead(lead)
                   }
-                  aria-busy={rowLoading || undefined}
+                  aria-busy={isProcessing || undefined}
                   className={cn(
                     isProcessing ? "cursor-wait" : "cursor-pointer",
-                    rowLoading && "ai-row",
+                    isProcessing && "ai-row",
                     isSelected &&
                       "bg-[color:color-mix(in_oklab,var(--brand-marigold)_8%,transparent)]"
                   )}
@@ -555,78 +803,95 @@ export function ExtractedLeadTable({
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="font-medium">
-                    {cell(lead.displayName ?? lead.name)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.firstName)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.lastName)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.title)}
-                  </TableCell>
-                  <TableCell>{cell(lead.company)}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.email)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.phone)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.mobile)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.website)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.address)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.city)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.zipCode)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.country)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.annualRevenue)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {cell(lead.employeeHeadcount)}
-                  </TableCell>
-                  <TableCell>{cell(lead.gicsSector)}</TableCell>
-                  <TableCell>{cell(lead.gicsIndustryGroup)}</TableCell>
-                  <TableCell>{cell(lead.gicsIndustry)}</TableCell>
-                  <TableCell>{cell(lead.gicsSubIndustry)}</TableCell>
-                  <TableCell
-                    className="max-w-[240px] truncate text-muted-foreground"
-                    title={lead.gicsSubIndustryDescription ?? undefined}
-                  >
-                    {cell(lead.gicsSubIndustryDescription)}
-                  </TableCell>
-                  <TableCell>
-                    {isEnriching ? (
-                      <AIWorkingPill />
-                    ) : (
-                      <Badge
-                        variant={
-                          lead.enrichmentStatus === "enriched"
-                            ? "default"
-                            : lead.enrichmentStatus === "failed"
-                              ? "destructive"
-                              : "secondary"
-                        }
-                      >
-                        {lead.enrichmentStatus === "enriched"
-                          ? "AI Enriched"
-                          : lead.enrichmentStatus}
-                      </Badge>
+                  <TruncCell
+                    value={lead.displayName ?? lead.name}
+                    className={cn(
+                      LEAD_COLUMN_CELL.displayName,
+                      "font-medium text-foreground"
                     )}
-                  </TableCell>
+                    emphasize
+                  />
+                  <TruncCell
+                    value={lead.firstName}
+                    className={LEAD_COLUMN_CELL.firstName}
+                  />
+                  <TruncCell
+                    value={lead.lastName}
+                    className={LEAD_COLUMN_CELL.lastName}
+                  />
+                  <TruncCell
+                    value={lead.title}
+                    className={LEAD_COLUMN_CELL.title}
+                  />
+                  <TruncCell
+                    value={lead.company}
+                    className={LEAD_COLUMN_CELL.company}
+                    emphasize
+                  />
+                  <TruncCell
+                    value={lead.email}
+                    className={LEAD_COLUMN_CELL.email}
+                  />
+                  <TruncCell
+                    value={lead.phone}
+                    className={LEAD_COLUMN_CELL.phone}
+                  />
+                  <TruncCell
+                    value={lead.mobile}
+                    className={LEAD_COLUMN_CELL.mobile}
+                  />
+                  <TruncCell
+                    value={lead.website}
+                    className={LEAD_COLUMN_CELL.website}
+                  />
+                  <TruncCell
+                    value={lead.address}
+                    className={LEAD_COLUMN_CELL.address}
+                  />
+                  <TruncCell
+                    value={lead.city}
+                    className={LEAD_COLUMN_CELL.city}
+                  />
+                  <TruncCell
+                    value={lead.zipCode}
+                    className={LEAD_COLUMN_CELL.zipCode}
+                  />
+                  <TruncCell
+                    value={lead.country}
+                    className={LEAD_COLUMN_CELL.country}
+                  />
+                  <TruncCell
+                    value={lead.annualRevenue}
+                    className={LEAD_COLUMN_CELL.annualRevenue}
+                  />
+                  <TruncCell
+                    value={lead.employeeHeadcount}
+                    className={LEAD_COLUMN_CELL.employeeHeadcount}
+                  />
+                  <TruncCell
+                    value={lead.gicsSector}
+                    className={LEAD_COLUMN_CELL.gicsSector}
+                    emphasize
+                  />
+                  <TruncCell
+                    value={lead.gicsIndustryGroup}
+                    className={LEAD_COLUMN_CELL.gicsIndustryGroup}
+                    emphasize
+                  />
+                  <TruncCell
+                    value={lead.gicsIndustry}
+                    className={LEAD_COLUMN_CELL.gicsIndustry}
+                    emphasize
+                  />
+                  <TruncCell
+                    value={lead.gicsSubIndustry}
+                    className={LEAD_COLUMN_CELL.gicsSubIndustry}
+                    emphasize
+                  />
+                  <TruncCell
+                    value={lead.gicsSubIndustryDescription}
+                    className={LEAD_COLUMN_CELL.gicsSubIndustryDescription}
+                  />
                   <TableCell>
                     <ConfidenceBadge confidence={lead.confidence} />
                   </TableCell>
@@ -679,11 +944,11 @@ export function ExtractedLeadTable({
               Rows per page
             </span>
             <Select
-              value={String(pageSize)}
-              onValueChange={(v) => v && setPageSize(Number(v))}
+              value={String(activePageSize)}
+              onValueChange={(v) => v && setPageSizeSafe(Number(v))}
             >
               <SelectTrigger className="h-8 w-[84px]">
-                <SelectValue>{(v) => v ?? String(pageSize)}</SelectValue>
+                <SelectValue>{(v) => v ?? String(activePageSize)}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {PAGE_SIZE_OPTIONS.map((size) => (
@@ -708,7 +973,7 @@ export function ExtractedLeadTable({
                 variant="outline"
                 size="icon"
                 className="h-8 w-8"
-                onClick={() => setPage(1)}
+                onClick={() => setPageSafe(1)}
                 disabled={!canPrev}
                 aria-label="First page"
               >
@@ -718,7 +983,7 @@ export function ExtractedLeadTable({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                onClick={() => setPageSafe(Math.max(1, safePage - 1))}
                 disabled={!canPrev}
               >
                 <ChevronLeft className="h-4 w-4" />
@@ -728,7 +993,7 @@ export function ExtractedLeadTable({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                onClick={() => setPageSafe(Math.min(totalPages, safePage + 1))}
                 disabled={!canNext}
               >
                 Next
@@ -739,7 +1004,7 @@ export function ExtractedLeadTable({
                 variant="outline"
                 size="icon"
                 className="h-8 w-8"
-                onClick={() => setPage(totalPages)}
+                onClick={() => setPageSafe(totalPages)}
                 disabled={!canNext}
                 aria-label="Last page"
               >
