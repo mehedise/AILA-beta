@@ -5,10 +5,10 @@ import { FileSpreadsheet, FileText, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { VERCEL_DIRECT_UPLOAD_MAX_BYTES } from "@/lib/imports/settings";
 
 const STANDARD_MAX_BYTES = 50 * 1024 * 1024;
 const MULTIPART_MAX_BYTES = 500 * 1024 * 1024;
-const LARGE_FILE_BYTES = 50 * 1024 * 1024;
 
 type Props = {
   onUploaded?: () => void;
@@ -163,7 +163,7 @@ export function UploadDropzone({ onUploaded }: Props) {
       setUploading(true);
       setProgress(0);
       try {
-        if (file.size > LARGE_FILE_BYTES) {
+        if (file.size > VERCEL_DIRECT_UPLOAD_MAX_BYTES) {
           await uploadMultipart(file);
         } else {
           await uploadStandard(file);
@@ -229,7 +229,9 @@ export function UploadDropzone({ onUploaded }: Props) {
           <FileText className="h-3 w-3" /> PDF
         </span>
         <span className="text-muted-foreground/70">·</span>
-        <span>Up to 50&nbsp;MB direct · 500&nbsp;MB large PDF</span>
+        <span>
+          Up to 4&nbsp;MB direct · larger files via R2 · max 500&nbsp;MB PDF
+        </span>
       </div>
 
       {uploading && progress > 0 && (
