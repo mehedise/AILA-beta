@@ -35,8 +35,11 @@ export function resolveImportSettings(
   return { ...base, ...overrides };
 }
 
-/** File size above this uses multipart + large pipeline (bytes). */
+/** File size above this uses the large PDF processing pipeline (bytes). */
 export const LARGE_FILE_BYTES = 50 * 1024 * 1024;
+
+/** Above Vercel's ~4.5MB function body limit — upload via R2 multipart instead. */
+export const VERCEL_DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 
 /** Page count above this uses large pipeline even if file is small. */
 export const LARGE_PAGE_THRESHOLD = 500;
