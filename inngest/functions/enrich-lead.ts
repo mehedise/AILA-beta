@@ -10,7 +10,7 @@ export const enrichLeadFn = inngest.createFunction(
   {
     id: "enrich-lead",
     retries: 3,
-    concurrency: { limit: 20 },
+    concurrency: { limit: 5 },
     triggers: [{ event: "lead/enrich.requested" }],
   },
   async ({ event, step }) => {

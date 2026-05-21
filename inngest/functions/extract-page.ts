@@ -8,7 +8,7 @@ import {
 export const extractPage = inngest.createFunction(
   {
     id: "extract-page",
-    concurrency: { limit: 10 },
+    concurrency: { limit: 5 },
     retries: 1,
     triggers: [{ event: "import/pdf.page.extract" }],
   },
