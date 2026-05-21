@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import {
   LARGE_FILE_BYTES,
+  VERCEL_DIRECT_UPLOAD_MAX_BYTES,
   resolveImportSettings,
+  type ImportProcessingMode,
 } from "@/lib/imports/settings";
 import { createMultipartUpload } from "@/lib/storage/r2";
 
@@ -34,11 +36,11 @@ export async function POST(req: Request) {
     );
   }
 
-  if (fileSize <= LARGE_FILE_BYTES) {
+  if (fileSize <= VERCEL_DIRECT_UPLOAD_MAX_BYTES) {
     return NextResponse.json(
       {
         error:
-          "Use standard upload for files under 50MB",
+          "Use standard upload for files 4MB or smaller",
         useStandardUpload: true,
       },
       { status: 400 }
@@ -71,6 +73,9 @@ export async function POST(req: Request) {
   const partSize = 10 * 1024 * 1024;
   const partCount = Math.ceil(fileSize / partSize);
 
+  const processingMode: ImportProcessingMode =
+    fileSize > LARGE_FILE_BYTES ? "large" : "standard";
+
   return NextResponse.json({
     importId,
     fileKey,
@@ -80,7 +85,7 @@ export async function POST(req: Request) {
     uploadId,
     partSize,
     partCount,
-    processingMode: "large" as const,
-    importSettings: resolveImportSettings("large"),
+    processingMode,
+    importSettings: resolveImportSettings(processingMode),
   });
 }
