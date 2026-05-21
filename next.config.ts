@@ -20,7 +20,8 @@ const nextConfig: NextConfig = {
     proxyClientMaxBodySize: "60mb",
   },
   outputFileTracingIncludes: {
-    "/*": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+    "/api/inngest": ["./lib/pdf/vendor/pdf.worker.mjs"],
+    "/*": ["./lib/pdf/vendor/pdf.worker.mjs"],
   },
 };
 

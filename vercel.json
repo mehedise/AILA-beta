@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "app/api/inngest/route.ts": {
+      "maxDuration": 300,
+      "includeFiles": "lib/pdf/vendor/pdf.worker.mjs"
+    }
+  }
+}
