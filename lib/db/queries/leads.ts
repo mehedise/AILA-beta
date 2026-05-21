@@ -275,9 +275,9 @@ export async function listLeads(
   }));
 }
 
-/** Imports that have approved workspace leads or extracted leads still needing review. */
-export async function listImportsWithApprovedOrNeedsReviewLeads(userId: string) {
-  const approvedRows = await db
+/** Imports that have at least one approved lead in the workspace. */
+export async function listImportsWithApprovedLeads(userId: string) {
+  const rows = await db
     .select({
       id: imports.id,
       fileName: imports.fileName,
@@ -292,32 +292,14 @@ export async function listImportsWithApprovedOrNeedsReviewLeads(userId: string) 
     .where(and(eq(leads.userId, userId), eq(imports.userId, userId)))
     .orderBy(desc(imports.createdAt));
 
-  const needsReviewRows = await db
-    .select({
-      id: imports.id,
-      fileName: imports.fileName,
-      createdAt: imports.createdAt,
-    })
-    .from(extractedLeads)
-    .innerJoin(imports, eq(extractedLeads.importId, imports.id))
-    .where(
-      and(
-        eq(imports.userId, userId),
-        eq(extractedLeads.reviewStatus, "pending")
-      )
-    )
-    .orderBy(desc(imports.createdAt));
-
   const seen = new Set<string>();
-  const out: { id: string; fileName: string; createdAt: Date }[] = [];
-  for (const row of [...approvedRows, ...needsReviewRows]) {
+  const out: { id: string; fileName: string }[] = [];
+  for (const row of rows) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
-    out.push({ id: row.id, fileName: row.fileName, createdAt: row.createdAt });
+    out.push({ id: row.id, fileName: row.fileName });
   }
-  return out
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-    .map(({ id, fileName }) => ({ id, fileName }));
+  return out;
 }
 
 export async function listLeadIds(userId: string, filters: LeadListFilters) {

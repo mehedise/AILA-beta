@@ -7,10 +7,21 @@ import Image from "next/image";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TaxonomyPicker } from "@/components/taxonomy-picker";
 import { fieldConfidenceClass } from "@/components/confidence-badge";
 import { cn } from "@/lib/utils";
 import { gicsToDbFields } from "@/lib/taxonomy/gics-fields";
+import {
+  ANNUAL_REVENUE_OPTIONS,
+  HEADCOUNT_OPTIONS,
+} from "@/lib/leads/firmographic-options";
 import type { GicsEntry } from "@/lib/taxonomy/gics";
 import type { ExtractedLead } from "@/lib/db/schema";
 
@@ -110,6 +121,8 @@ const LOCATION_FIELDS: FieldDef[] = [
   { key: "country", label: "Country" },
 ];
 
+const EMPTY_SELECT_VALUE = "__empty__";
+
 export function CardReviewForm({
   lead,
   onApprove,
@@ -156,10 +169,52 @@ export function CardReviewForm({
 
   const renderField = ({ key, label, fcKey, textarea }: FieldDef) => {
     const fc = fcKey ? getFieldConfidence(lead, fcKey) : undefined;
+    const selectOptions =
+      key === "annualRevenue"
+        ? ANNUAL_REVENUE_OPTIONS
+        : key === "employeeHeadcount"
+          ? HEADCOUNT_OPTIONS
+          : null;
+
     return (
       <div key={key} className="space-y-1.5">
         <Label htmlFor={key}>{label}</Label>
-        {textarea ? (
+        {selectOptions ? (
+          <Select
+            value={form.watch(key) || EMPTY_SELECT_VALUE}
+            onValueChange={(value) =>
+              form.setValue(
+                key,
+                !value || value === EMPTY_SELECT_VALUE ? "" : value,
+                { shouldDirty: true }
+              )
+            }
+          >
+            <SelectTrigger
+              id={key}
+              className={cn(
+                "w-full border-2",
+                fc ? fieldConfidenceClass(fc.confidence) : ""
+              )}
+            >
+              <SelectValue>
+                {(value) =>
+                  !value || value === EMPTY_SELECT_VALUE
+                    ? `Select ${label.toLowerCase()}`
+                    : value
+                }
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={EMPTY_SELECT_VALUE}>Not specified</SelectItem>
+              {selectOptions.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : textarea ? (
           <textarea
             id={key}
             {...form.register(key)}

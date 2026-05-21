@@ -3,7 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { leads } from "@/lib/db/schema";
-import { listImportsWithApprovedOrNeedsReviewLeads } from "@/lib/db/queries/leads";
+import { listImportsWithApprovedLeads } from "@/lib/db/queries/leads";
 
 export async function GET() {
   const { userId } = await auth();
@@ -16,7 +16,7 @@ export async function GET() {
       .selectDistinct({ country: leads.country })
       .from(leads)
       .where(and(eq(leads.userId, userId), sql`${leads.country} is not null`)),
-    listImportsWithApprovedOrNeedsReviewLeads(userId),
+    listImportsWithApprovedLeads(userId),
   ]);
 
   const countries = Array.from(
