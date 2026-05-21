@@ -29,10 +29,9 @@ export const classifyLead = inngest.createFunction(
   {
     id: "classify-lead",
     retries: 3,
-    // Batch up to 20 leads per OpenAI call, waiting at most 5s for more
-    // events. This amortizes the large GICS candidate prompt across many
-    // leads — biggest single cost driver per import.
-    batchEvents: { maxSize: 20, timeout: "5s" },
+    // Batch up to 5 leads per OpenAI call (Inngest plan batch limit), waiting
+    // at most 5s for more events.
+    batchEvents: { maxSize: 5, timeout: "5s" },
     triggers: [{ event: "lead/classify.requested" }],
   },
   async ({ events, step }) => {
