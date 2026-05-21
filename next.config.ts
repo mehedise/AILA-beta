@@ -19,6 +19,9 @@ const nextConfig: NextConfig = {
   experimental: {
     proxyClientMaxBodySize: "60mb",
   },
+  outputFileTracingIncludes: {
+    "/*": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+  },
 };
 
 export default nextConfig;

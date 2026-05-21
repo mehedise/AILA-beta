@@ -1,3 +1,5 @@
+import { loadPdfJs, pdfDocumentInit } from "./pdfjs-server";
+
 export type PageTextResult = {
   text: string;
   annotationUrls: string[];
@@ -7,11 +9,8 @@ export async function extractPageText(
   pdfBuffer: Buffer,
   pageNumber: number
 ): Promise<PageTextResult> {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(pdfBuffer),
-    useSystemFonts: true,
-  });
+  const pdfjs = await loadPdfJs();
+  const loadingTask = pdfjs.getDocument(pdfDocumentInit(pdfBuffer));
   const doc = await loadingTask.promise;
   const page = await doc.getPage(pageNumber);
 

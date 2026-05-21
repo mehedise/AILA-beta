@@ -4,6 +4,7 @@ import {
   writePageArtifact,
   writePageImage,
 } from "./page-artifacts";
+import { loadPdfJs, pdfDocumentInit } from "./pdfjs-server";
 
 /**
  * Minimum text length (whitespace-normalized) for a page to be considered
@@ -37,11 +38,8 @@ type PdfDoc = {
 };
 
 async function loadDoc(pdfBuffer: Buffer): Promise<PdfDoc> {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(pdfBuffer),
-    useSystemFonts: true,
-  });
+  const pdfjs = await loadPdfJs();
+  const loadingTask = pdfjs.getDocument(pdfDocumentInit(pdfBuffer));
   return (await loadingTask.promise) as unknown as PdfDoc;
 }
 
