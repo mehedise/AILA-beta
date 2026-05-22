@@ -97,10 +97,15 @@ Fixed column headers (case-insensitive):
 
 ## Deployment (Vercel + Inngest Cloud)
 
-1. Deploy to [Vercel](https://vercel.com) with all env vars
-2. Connect [Inngest Cloud](https://www.inngest.com) to your Vercel app URL
-3. Set `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` in Vercel
-4. Ensure R2 CORS allows your Vercel domain if using public URLs
+See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the full workflow (Development vs Production, env vars, PR flow, Inngest, R2, Clerk).
+
+Quick release after a feature branch is pushed:
+
+```bash
+./scripts/release.sh "Short description of the change"
+```
+
+That merges to `develop` (Preview), then `develop` → `main` (Production), matching GitHub branch protection.
 
 ## Cost estimate
 
