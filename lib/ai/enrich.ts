@@ -104,6 +104,9 @@ const INFERENCE_FILLABLE_FIELDS = new Set<keyof EnrichmentInput>([
   "title",
   "company",
   "website",
+  "address",
+  "city",
+  "zipCode",
   "country",
   "annualRevenue",
   "employeeHeadcount",
@@ -138,6 +141,7 @@ async function fallbackEnrichment(
           "You are a B2B lead enrichment assistant. Fill MISSING fields based on prior knowledge of the company. " +
           "Never invent personal data (emails, phones) you don't actually know. " +
           "Never overwrite fields that are already present. If unsure, return null. " +
+          "For address, city, and zip/postal code, only fill values when you can confidently identify the company's public business location; do not guess a street address or postal code. " +
           "For annualRevenue use ranges like '$1M-$10M'. " +
           "For employeeHeadcount use ranges like '11-50'. " +
           "In fieldSources, write a brief justification per field (e.g., 'inferred from company name', or 'from website domain').",
