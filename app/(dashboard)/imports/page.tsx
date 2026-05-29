@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useUser } from "@clerk/nextjs";
 import {
   AlertCircle,
   ArrowRight,
@@ -31,9 +32,11 @@ const LARGE_PRERENDER_BATCH_SIZE = 50;
 type ImportListRow = Import & {
   approvedLeadCount: number;
   unclassifiedLeadCount: number;
+  uploadedByLabel: string;
 };
 
 export default function ImportsPage() {
+  const { user } = useUser();
   const [imports, setImports] = useState<ImportListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -321,6 +324,7 @@ export default function ImportsPage() {
                   </TableHead>
                   <TableHead className="w-[240px]">File</TableHead>
                   <TableHead className="w-20">Type</TableHead>
+                  <TableHead className="w-40">Uploaded by</TableHead>
                   <TableHead className="w-56">Progress</TableHead>
                   <TableHead className="w-44">Leads</TableHead>
                   <TableHead className="w-44">Created</TableHead>
@@ -358,6 +362,18 @@ export default function ImportsPage() {
                       </TableCell>
                       <TableCell className="text-xs uppercase tracking-wide text-muted-foreground">
                         {imp.sourceType}
+                      </TableCell>
+                      <TableCell className="whitespace-normal text-sm text-muted-foreground">
+                        <span
+                          className="block truncate"
+                          title={
+                            imp.userId === user?.id
+                              ? "You"
+                              : imp.uploadedByLabel
+                          }
+                        >
+                          {imp.userId === user?.id ? "You" : imp.uploadedByLabel}
+                        </span>
                       </TableCell>
                       <TableCell>
                         <ProgressCell

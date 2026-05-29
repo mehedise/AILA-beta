@@ -131,11 +131,8 @@ function employeeHeadcountBucketCondition(
   )!;
 }
 
-export function buildLeadConditions(
-  userId: string,
-  filters: LeadListFilters
-): SQL[] {
-  const conditions: SQL[] = [eq(leads.userId, userId)];
+export function buildLeadConditions(filters: LeadListFilters): SQL[] {
+  const conditions: SQL[] = [];
 
   const q = filters.q?.trim();
   if (q) {
@@ -209,12 +206,7 @@ export function buildLeadConditions(
           .select({ id: extractedLeads.id })
           .from(extractedLeads)
           .innerJoin(imports, eq(extractedLeads.importId, imports.id))
-          .where(
-            and(
-              eq(extractedLeads.importId, filters.importId),
-              eq(imports.userId, userId)
-            )
-          )
+          .where(eq(extractedLeads.importId, filters.importId))
       )
     );
   }
@@ -228,8 +220,8 @@ export function buildLeadConditions(
   return conditions;
 }
 
-export async function countLeads(userId: string, filters: LeadListFilters) {
-  const conditions = buildLeadConditions(userId, filters);
+export async function countLeads(filters: LeadListFilters) {
+  const conditions = buildLeadConditions(filters);
   const [row] = await db
     .select({ total: count() })
     .from(leads)
@@ -238,12 +230,11 @@ export async function countLeads(userId: string, filters: LeadListFilters) {
 }
 
 export async function listLeads(
-  userId: string,
   filters: LeadListFilters,
   page: PageParams,
   sort?: { sortBy: string | null; sortDir: "asc" | "desc" }
 ) {
-  const conditions = buildLeadConditions(userId, filters);
+  const conditions = buildLeadConditions(filters);
   const sortCol =
     sort?.sortBy && sort.sortBy in LEAD_SORT_COLUMNS
       ? LEAD_SORT_COLUMNS[sort.sortBy as keyof typeof LEAD_SORT_COLUMNS]
@@ -276,7 +267,7 @@ export async function listLeads(
 }
 
 /** Imports that have at least one approved lead in the workspace. */
-export async function listImportsWithApprovedLeads(userId: string) {
+export async function listImportsWithApprovedLeads() {
   const rows = await db
     .select({
       id: imports.id,
@@ -289,7 +280,6 @@ export async function listImportsWithApprovedLeads(userId: string) {
       eq(leads.sourceExtractedLeadId, extractedLeads.id)
     )
     .innerJoin(imports, eq(extractedLeads.importId, imports.id))
-    .where(and(eq(leads.userId, userId), eq(imports.userId, userId)))
     .orderBy(desc(imports.createdAt));
 
   const seen = new Set<string>();
@@ -302,8 +292,8 @@ export async function listImportsWithApprovedLeads(userId: string) {
   return out;
 }
 
-export async function listLeadIds(userId: string, filters: LeadListFilters) {
-  const conditions = buildLeadConditions(userId, filters);
+export async function listLeadIds(filters: LeadListFilters) {
+  const conditions = buildLeadConditions(filters);
   return db
     .select({ id: leads.id })
     .from(leads)
@@ -311,8 +301,8 @@ export async function listLeadIds(userId: string, filters: LeadListFilters) {
     .orderBy(desc(leads.createdAt), desc(leads.id));
 }
 
-export async function getLeadStats(userId: string, filters: LeadListFilters) {
-  const conditions = buildLeadConditions(userId, filters);
+export async function getLeadStats(filters: LeadListFilters) {
+  const conditions = buildLeadConditions(filters);
   const where = and(...conditions);
 
   const [totalRow] = await db

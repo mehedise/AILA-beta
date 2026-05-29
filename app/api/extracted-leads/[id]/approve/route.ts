@@ -32,7 +32,7 @@ export async function POST(
     .innerJoin(imports, eq(extractedLeads.importId, imports.id))
     .where(eq(extractedLeads.id, id));
 
-  if (!existing || existing.import.userId !== userId) {
+  if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { desc, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { resolveUserLabels } from "@/lib/auth/clerk-users";
 import { db } from "@/lib/db/client";
 import { extractedLeads, imports } from "@/lib/db/schema";
 
@@ -13,7 +14,6 @@ export async function GET() {
   const rows = await db
     .select()
     .from(imports)
-    .where(eq(imports.userId, userId))
     .orderBy(desc(imports.createdAt));
 
   const statsRows = await db
@@ -27,7 +27,6 @@ export async function GET() {
     })
     .from(extractedLeads)
     .innerJoin(imports, eq(extractedLeads.importId, imports.id))
-    .where(eq(imports.userId, userId))
     .groupBy(extractedLeads.importId);
 
   const statsByImport = new Map(
@@ -40,9 +39,12 @@ export async function GET() {
     ])
   );
 
+  const uploadedByLabels = await resolveUserLabels(rows.map((row) => row.userId));
+
   return NextResponse.json({
     imports: rows.map((row) => ({
       ...row,
+      uploadedByLabel: uploadedByLabels.get(row.userId) ?? row.userId,
       approvedLeadCount: statsByImport.get(row.id)?.approvedLeadCount ?? 0,
       unclassifiedLeadCount:
         statsByImport.get(row.id)?.unclassifiedLeadCount ?? 0,
