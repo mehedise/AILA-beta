@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { extractedLeads, leads } from "@/lib/db/schema";
@@ -26,7 +26,7 @@ export async function GET(
   const [lead] = await db
     .select()
     .from(leads)
-    .where(and(eq(leads.id, id), eq(leads.userId, userId)));
+    .where(eq(leads.id, id));
 
   if (!lead) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

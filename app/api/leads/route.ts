@@ -89,13 +89,13 @@ export async function GET(req: Request) {
   const filters = parseFilters(searchParams);
 
   if (searchParams.get("idsOnly") === "true") {
-    const rows = await listLeadIds(userId, filters);
+    const rows = await listLeadIds(filters);
     return NextResponse.json({ ids: rows.map((row) => row.id) });
   }
 
   const [totalCount, rows] = await Promise.all([
-    countLeads(userId, filters),
-    listLeads(userId, filters, page, sort),
+    countLeads(filters),
+    listLeads(filters, page, sort),
   ]);
 
   return NextResponse.json({

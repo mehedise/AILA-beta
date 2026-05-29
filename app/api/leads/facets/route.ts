@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { and, eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { leads } from "@/lib/db/schema";
@@ -15,8 +15,8 @@ export async function GET() {
     db
       .selectDistinct({ country: leads.country })
       .from(leads)
-      .where(and(eq(leads.userId, userId), sql`${leads.country} is not null`)),
-    listImportsWithApprovedLeads(userId),
+      .where(sql`${leads.country} is not null`),
+    listImportsWithApprovedLeads(),
   ]);
 
   const countries = Array.from(

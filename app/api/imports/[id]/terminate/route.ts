@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { imports } from "@/lib/db/schema";
@@ -18,7 +18,7 @@ export async function POST(
   const [imp] = await db
     .select()
     .from(imports)
-    .where(and(eq(imports.id, id), eq(imports.userId, userId)));
+    .where(eq(imports.id, id));
 
   if (!imp) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -34,7 +34,7 @@ export async function POST(
       status: "terminated",
       error: "Import terminated by user",
     })
-    .where(and(eq(imports.id, id), eq(imports.userId, userId)))
+    .where(eq(imports.id, id))
     .returning();
 
   return NextResponse.json({ import: updated });
