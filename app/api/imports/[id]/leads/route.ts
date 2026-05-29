@@ -40,7 +40,7 @@ export async function GET(
   const [imp] = await db
     .select()
     .from(imports)
-    .where(and(eq(imports.id, id), eq(imports.userId, userId)));
+    .where(eq(imports.id, id));
 
   if (!imp) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

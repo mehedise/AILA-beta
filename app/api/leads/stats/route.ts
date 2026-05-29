@@ -46,6 +46,6 @@ export async function GET(req: Request) {
   }
 
   const filters = parseFilters(new URL(req.url).searchParams);
-  const stats = await getLeadStats(userId, filters);
+  const stats = await getLeadStats(filters);
   return NextResponse.json({ stats });
 }

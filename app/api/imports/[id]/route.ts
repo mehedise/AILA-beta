@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { extractedLeads, imports } from "@/lib/db/schema";
@@ -20,7 +20,7 @@ export async function GET(
   const [imp] = await db
     .select()
     .from(imports)
-    .where(and(eq(imports.id, id), eq(imports.userId, userId)));
+    .where(eq(imports.id, id));
 
   if (!imp) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -44,7 +44,7 @@ export async function DELETE(
   const [imp] = await db
     .select()
     .from(imports)
-    .where(and(eq(imports.id, id), eq(imports.userId, userId)));
+    .where(eq(imports.id, id));
 
   if (!imp) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -58,7 +58,7 @@ export async function DELETE(
 
   const result = await db
     .delete(imports)
-    .where(and(eq(imports.id, id), eq(imports.userId, userId)))
+    .where(eq(imports.id, id))
     .returning({ id: imports.id });
 
   if (result.length === 0) {

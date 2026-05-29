@@ -25,7 +25,7 @@ export async function GET(
     .innerJoin(imports, eq(extractedLeads.importId, imports.id))
     .where(eq(extractedLeads.id, id));
 
-  if (!lead || lead.import.userId !== userId) {
+  if (!lead) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -53,7 +53,7 @@ export async function PATCH(
     .innerJoin(imports, eq(extractedLeads.importId, imports.id))
     .where(eq(extractedLeads.id, id));
 
-  if (!existing || existing.import.userId !== userId) {
+  if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

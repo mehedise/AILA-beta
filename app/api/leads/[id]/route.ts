@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { leads } from "@/lib/db/schema";
@@ -50,7 +50,7 @@ export async function PATCH(
   const [existing] = await db
     .select()
     .from(leads)
-    .where(and(eq(leads.id, id), eq(leads.userId, userId)));
+    .where(eq(leads.id, id));
 
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -84,7 +84,7 @@ export async function PATCH(
       name: composedName,
       updatedAt: new Date(),
     })
-    .where(and(eq(leads.id, id), eq(leads.userId, userId)))
+    .where(eq(leads.id, id))
     .returning();
 
   return NextResponse.json({ lead: updated });
@@ -103,7 +103,7 @@ export async function DELETE(
 
   const result = await db
     .delete(leads)
-    .where(and(eq(leads.id, id), eq(leads.userId, userId)))
+    .where(eq(leads.id, id))
     .returning({ id: leads.id });
 
   if (result.length === 0) {
